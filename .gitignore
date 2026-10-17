@@ -1,0 +1,26 @@
+# Pairing/signing material and any locally paired build output
+.local/
+.tools/
+private/
+dist/
+build/
+**/bin/
+**/obj/
+*.exe
+*.apk
+*.bin
+*.elf
+*.map
+*.hex
+*.p12
+*.jks
+*.keystore
+pairing.json
+pairing.bin
+PairingKey.h
+*signing-password*
+*.log
+*.user
+.vs/
+.idea/
+__pycache__/
