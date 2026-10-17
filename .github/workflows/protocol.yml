@@ -1,0 +1,22 @@
+name: Protocol interoperability
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  protocol:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Check publication files
+        shell: pwsh
+        run: ./scripts/Check-Publish.ps1
+      - name: Verify Windows and Android protocol compatibility
+        shell: pwsh
+        run: ./scripts/Test-Protocol.ps1
