@@ -1,0 +1,17 @@
+<resources>
+  <style name="AtomClipTheme" parent="android:style/Theme.Material.Light.NoActionBar">
+    <item name="android:fontFamily">sans</item>
+    <item name="android:colorAccent">#0071E3</item>
+    <item name="android:colorControlActivated">#0071E3</item>
+    <item name="android:windowBackground">#F5F5F7</item>
+    <item name="android:windowLightStatusBar">true</item>
+    <item name="android:statusBarColor">#F5F5F7</item>
+    <item name="android:navigationBarColor">#F5F5F7</item>
+    <item name="android:alertDialogTheme">@style/AtomClipDialog</item>
+  </style>
+  <style name="AtomClipDialog" parent="android:style/Theme.Material.Light.Dialog.Alert">
+    <item name="android:colorAccent">#0071E3</item>
+    <item name="android:windowBackground">@drawable/dialog_surface</item>
+    <item name="android:fontFamily">sans</item>
+  </style>
+</resources>
