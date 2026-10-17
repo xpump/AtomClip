@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <title>AtomClip — 浅色 · 双向文本同步</title>
+  <desc>奶白至浅薄荷绿圆角底，柔和灰绿色剪贴板轮廓，薄荷绿与雾蓝色双向箭头。</desc>
+  <defs>
+    <linearGradient id="background" x1="140" y1="64" x2="876" y2="960" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F5F9F0"/>
+      <stop offset="1" stop-color="#DDEEE7"/>
+    </linearGradient>
+    <linearGradient id="send" x1="366" y1="430" x2="658" y2="500" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#74C4AE"/>
+      <stop offset="1" stop-color="#63B4AA"/>
+    </linearGradient>
+    <linearGradient id="receive" x1="366" y1="600" x2="658" y2="670" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#88ADC7"/>
+      <stop offset="1" stop-color="#9CBFD4"/>
+    </linearGradient>
+  </defs>
+  <rect x="32" y="32" width="960" height="960" rx="224" fill="url(#background)"/>
+  <rect x="34" y="34" width="956" height="956" rx="222" fill="none" stroke="#FFFFFF" stroke-opacity=".65" stroke-width="4"/>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <rect x="270" y="242" width="484" height="584" rx="68" fill="#FFFFFF" fill-opacity=".46" stroke="#638883" stroke-width="44"/>
+    <rect x="408" y="190" width="208" height="104" rx="34" fill="#F4F9F0" stroke="#638883" stroke-width="38"/>
+    <path d="M366 464H658M594 400L658 464L594 528" fill="none" stroke="url(#send)" stroke-width="46"/>
+    <path d="M658 634H366M430 570L366 634L430 698" fill="none" stroke="url(#receive)" stroke-width="46"/>
+  </g>
+</svg>
