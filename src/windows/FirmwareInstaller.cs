@@ -25,7 +25,7 @@ namespace AtomClipUsb
         }
         void ShowLicenses()
         {
-            using (var window = new Form { Text = "关于 AtomClip 0.1.0", Font = Font, Size = new Size(720, 520), StartPosition = FormStartPosition.CenterParent })
+            using (var window = new Form { Text = "关于 AtomClip 0.2.0", Font = Font, Size = new Size(720, 520), StartPosition = FormStartPosition.CenterParent })
             {
                 var text = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, Dock = DockStyle.Fill };
                 using (var input = Assembly.GetExecutingAssembly().GetManifestResourceStream("AtomClip.Licenses"))
@@ -43,19 +43,18 @@ namespace AtomClipUsb
 
     public static class FlashPlan
     {
-        public static async Task Execute(string port, string firmware, Func<string, Task<FlashCommandResult>> run)
+        public static async Task Execute(string port,string folder,FirmwareBuild build,bool factory,Func<string,Task<FlashCommandResult>> run)
         {
-            if (!Regex.IsMatch(port ?? "", "^COM[0-9]+$", RegexOptions.IgnoreCase)) throw new ArgumentException("请选择有效的 USB 端口。");
-            if (firmware.IndexOf('"') >= 0) throw new ArgumentException("固件路径无效。");
-            string common = "--chip esp32s3 --port " + port + " --baud 460800 --before no-reset ";
-            var probe = await run(common + "--after no-reset flash-id");
-            if (probe.ExitCode != 0) throw new IOException("未能识别 ESP32-S3。确认开发板型号、下载模式和 USB 端口后重试。");
-            if (!Regex.IsMatch(probe.Output ?? "", @"Detected flash size:\s*8MB\b", RegexOptions.IgnoreCase))
-                throw new IOException("未确认 8 MB Flash，已停止写入。此固件仅适用于 AtomS3U ESP32-S3 / 8 MB。");
-            var flash = await run(common + "--after hard-reset write-flash 0x0 \"" + firmware + "\"");
-            if (flash.ExitCode != 0) throw new IOException("烧录失败。保持下载模式，检查 USB 连接后重试；详细信息见日志。");
-            if ((flash.Output ?? "").IndexOf("Hash of data verified", StringComparison.OrdinalIgnoreCase) < 0)
-                throw new IOException("工具未报告写入校验成功，请检查日志后重试。");
+            if(!Regex.IsMatch(port??"","^COM[0-9]+$",RegexOptions.IgnoreCase)||folder.IndexOf('"')>=0)throw new IOException("USB 端口 / 固件路径无效");build.Validate(folder);
+            string common="--chip esp32s3 --port "+port+" --baud 460800 --before no-reset --after no-reset ";
+            var probe=await run(common+"flash-id");if(probe.ExitCode!=0||!Regex.IsMatch(probe.Output??"",@"Detected flash size:\s*"+(build.flashBytes/1048576)+@"MB\b",RegexOptions.IgnoreCase))throw new IOException("未确认匹配的 ESP32-S3 / Flash 容量，未写入");
+            var efuse=await run(common+"read-mem 0x6000703c");var value=Regex.Match(efuse.Output??"",@"0x6000703c\s*(?:=|:)\s*0x([a-f0-9]+)",RegexOptions.IgnoreCase);if(efuse.ExitCode!=0||!value.Success||(Convert.ToUInt32(value.Groups[1].Value,16)&512)!=0)throw new IOException("无法确认 SPI NOR 类型；OPI Flash 不受支持");
+            string table=Path.Combine(folder,"existing-partitions.bin");var read=await run(common+"read-flash 0x8000 3072 \""+table+"\"");if(read.ExitCode!=0||!File.Exists(table)||new FileInfo(table).Length!=3072)throw new IOException("分区表读取失败，未写入");
+            if(!build.Compatible(folder,File.ReadAllBytes(table))&&!factory)throw new IOException("分区不兼容或首次安装：先备份加密绑定配置，再明确选择清空安装；之后可通过USB恢复绑定");
+            if(factory){var clear=await run(common+"erase-flash");if(clear.ExitCode!=0)throw new IOException("清空 Flash 未完成，请重新进入下载模式");}
+            var args=new StringBuilder(common+"write-flash --flash-mode keep --flash-freq keep --flash-size keep");foreach(var seg in build.segments)args.Append(" 0x").Append(seg.offset.ToString("x")).Append(" \"").Append(Path.Combine(folder,seg.file)).Append("\"");
+            var written=await run(args.ToString());if(written.ExitCode!=0)throw new IOException("分段写入失败，请重新进入下载模式完整重试");
+            args=new StringBuilder(common+"verify-flash");foreach(var seg in build.segments)args.Append(" 0x").Append(seg.offset.ToString("x")).Append(" \"").Append(Path.Combine(folder,seg.file)).Append("\"");var verified=await run(args.ToString());if(verified.ExitCode!=0||Regex.Matches(verified.Output??"",@"Verification successful",RegexOptions.IgnoreCase).Count!=4)throw new IOException("未确认逐段校验成功");
         }
     }
 
@@ -68,6 +67,9 @@ namespace AtomClipUsb
 
     sealed class FirmwareInstaller : Form
     {
+        readonly ComboBox profiles = new ComboBox { DropDownStyle=ComboBoxStyle.DropDownList,Dock=DockStyle.Fill };
+        readonly CheckBox factory = new CheckBox { Text="清空安装（删除所有板上程序、数据和绑定）",AutoSize=true };
+        readonly BoardCatalog catalog=new BoardCatalog();
         readonly FileLog logger;
         readonly Action beforeFlash;
         readonly ComboBox ports = new ComboBox { DropDownStyle = ComboBoxStyle.DropDownList, Dock = DockStyle.Fill };
@@ -80,7 +82,7 @@ namespace AtomClipUsb
         public FirmwareInstaller(FileLog logger, Action beforeFlash)
         {
             this.logger = logger; this.beforeFlash = beforeFlash;
-            Text = "开发板设置 · AtomS3U"; Font = new Font("Microsoft YaHei UI", 10);
+            Text = "开发板设置 · ESP32-S3"; Font = new Font("Microsoft YaHei UI", 10);
             StartPosition = FormStartPosition.CenterParent; Size = new Size(780, 720); MinimumSize = new Size(560, 460);
             var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
             var root = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 1, Padding = new Padding(28), RowCount = 7 };
@@ -91,13 +93,13 @@ namespace AtomClipUsb
             header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             header.Controls.Add(title, 0, 0); header.Controls.Add(new HelpButton(delegate { Theme.Help(this, "开发板设置帮助", Guide.Firmware); }), 1, 0); root.Controls.Add(header, 0, 0);
             root.Controls.Add(new Label { AutoSize = true, Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 14), Text =
-                "1. 插入 AtomS3U（ESP32-S3 / 8 MB）。\r\n2. 长按 RESET 约 2 秒，绿灯亮后松开。\r\n3. 刷新并选择 USB 端口，再点击烧录。" }, 0, 1);
+                "1. 选择匹配板型（ESP32-S3、SPI NOR、原生 USB）。\r\n2. 按板厂说明进入 ROM 下载模式。\r\n3. 选择 USB 端口；首次安装或分区不兼容需选择清空安装。" }, 0, 1);
             var row = new CardPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 1, Padding = new Padding(14), Margin = new Padding(0, 0, 0, 16) };
             row.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             refresh.AutoSize = start.AutoSize = true; refresh.Padding = start.Padding = new Padding(8, 4, 8, 4);
-            row.Controls.Add(ports, 0, 0);
+            foreach(var p in catalog.Profiles.Values)profiles.Items.Add(p.name);profiles.SelectedIndex=0;row.Controls.Add(profiles,0,0);row.Controls.Add(ports, 0, 1);row.Controls.Add(factory,0,2);
             var flashActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = false, AutoSizeMode = AutoSizeMode.GrowAndShrink, Margin = new Padding(0, 10, 0, 0) };
-            flashActions.Controls.Add(refresh); flashActions.Controls.Add(start); row.Controls.Add(flashActions, 0, 1); root.Controls.Add(row, 0, 2);
+            flashActions.Controls.Add(refresh); flashActions.Controls.Add(start); row.Controls.Add(flashActions, 0, 3); root.Controls.Add(row, 0, 2);
             root.Controls.Add(status, 0, 3); root.Controls.Add(progress, 0, 4); var outputCard = new CardPanel { Dock = DockStyle.Fill, AutoSize = true, ColumnCount = 1, Padding = new Padding(14), Margin = new Padding(0, 12, 0, 16) }; outputCard.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
             outputCard.Controls.Add(output); root.Controls.Add(outputCard, 0, 5);
             var close = new SoftButton { Text = "关闭", AutoSize = true, Anchor = AnchorStyles.Right }; close.Click += delegate { Close(); }; root.Controls.Add(close, 0, 6);
@@ -181,21 +183,21 @@ namespace AtomClipUsb
         async Task Flash()
         {
             var selected = ports.SelectedItem as FlashPort; if (busy || selected == null) return;
-            if (MessageBox.Show(this, "将覆盖所选 AtomS3U 的现有程序和数据。\r\n确认型号为 AtomS3U、端口为 " + selected.Name + "，且已进入下载模式。", "确认烧录", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
-            busy = true; start.Enabled = refresh.Enabled = ports.Enabled = false; progress.Value = 0; output.Clear();
+            if (MessageBox.Show(this, "请确认所选板型、SPI NOR Flash、原生 USB 口和下载模式。\r\n普通升级仅在分区兼容时保留绑定；清空安装会删除全部数据，须先加密导出绑定，之后可通过 USB 恢复。\r\n所选板型："+profiles.SelectedItem+"\r\n端口：" + selected.Name + "，且已进入下载模式。", "确认烧录", MessageBoxButtons.OKCancel, MessageBoxIcon.Warning) != DialogResult.OK) return;
+            busy = true; start.Enabled = refresh.Enabled = ports.Enabled = profiles.Enabled = factory.Enabled = false; progress.Value = 0; output.Clear();
             string folder = Path.Combine(Path.GetTempPath(), "AtomClip-flash-" + Guid.NewGuid().ToString("N"));
             try
             {
                 beforeFlash(); Directory.CreateDirectory(folder); status.Text = "正在校验内置资源和识别开发板…";
-                string tool = Extract("esptool.exe", folder), firmware = Extract("AtomClip-S3U.bin", folder);
-                await FlashPlan.Execute(selected.Name, firmware, delegate(string arguments) { return RunTool(tool, arguments); });
+                string tool = Extract("esptool.exe", folder), bundleZip=Extract("firmware.zip",folder);ZipFile.ExtractToDirectory(bundleZip,folder);var bundle=FirmwareBundle.Load(folder);var profile=new List<BoardProfile>(catalog.Profiles.Values)[profiles.SelectedIndex];var build=bundle.Select(profile.id);if(!string.IsNullOrEmpty(build.pairingHash)){byte[] pairing;using(var input=Assembly.GetExecutingAssembly().GetManifestResourceStream("AtomClip.PairingKey")){pairing=new byte[32];if(input.Read(pairing,0,32)!=32)throw new IOException("配对资源无效");}try{if(FirmwareBuild.Hash(pairing)!=build.pairingHash)throw new IOException("迁移固件与本客户端旧配对不一致");}finally{Array.Clear(pairing,0,pairing.Length);}}
+                await FlashPlan.Execute(selected.Name,folder,build,factory.Checked,delegate(string arguments) { return RunTool(tool, arguments); });
                 progress.Value = 100; status.Text = "烧录与校验完成。";
                 Log("完成：拔下并重新插入开发板，再将其移至内网电脑。外网连接 BLE 后，选择使用模式并完成接收设置。");
             }
             catch (Exception ex) { status.Text = "未完成烧录"; Log(ex.GetType().Name + "：" + ex.Message); }
             finally
             {
-                busy = false; start.Enabled = refresh.Enabled = ports.Enabled = true;
+                busy = false; start.Enabled = refresh.Enabled = ports.Enabled = profiles.Enabled = factory.Enabled = true;
                 try { if (Directory.Exists(folder)) Directory.Delete(folder, true); } catch (IOException) { logger.Write("烧录临时文件清理未完成。"); } catch (UnauthorizedAccessException) { logger.Write("烧录临时文件清理权限不足。"); }
             }
         }

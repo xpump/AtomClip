@@ -102,7 +102,8 @@ class ConnectionModeTests
                 Set(form,"peerReady",false);Set(form,"supportsDirectKeys",true);Set(form,"supportsPinyin",false);Call(form,"UpdateEditorActions");
                 Require((bool)Call(form,"EditorTextValid")&&!((Control)Get(form,"probePinyin")).Enabled&&!((Control)Get(form,"directKeys")).Enabled&&((Label)Get(form,"keyboardReady")).Text.Contains("更新固件"),"unsupported firmware explains why trial is unavailable");
                 Set(form,"supportsPinyin",true);Call(form,"UpdateEditorActions");Require(((Control)Get(form,"probePinyin")).Enabled&&((Control)Get(form,"probePinyin")).Text.Contains("试输")&&editor.Visible&&((Control)Get(form,"directKeys")).Enabled,"supported VUC can skip trial on older compatible firmware");
-                ((Task)Call(form,"SendTypeJob","中文Ab123",true,false,true)).GetAwaiter().GetResult();Require(link.Plain[0]==5,"VUC sends actual encrypted mixed text without trial");
+                ((Task)Call(form,"SendTypeJob","中文Ab123",true,false,true)).GetAwaiter().GetResult();Require(link.Plain[0]==5&&link.Plain[1]==80&&link.Plain[2]==4,"VUC body defaults to stable pacing without opting in");
+                Require(!((CheckBox)Get(form,"gbkCompatible")).Checked&&!((Control)Get(form,"gbkCompatible")).Visible,"GBK speed remains unchecked and hidden in VUC");
                 ((CheckBox)Get(form,"requireProbe")).Checked=true;Require(!editor.Visible&&!((Control)Get(form,"directKeys")).Enabled,"opt-in trial gates body and send");
                 byte[] prior=link.Plain;Require(((Task<int>)Call(form,"SendTypeJob","中文Ab123",true,false,true)).GetAwaiter().GetResult()==-1&&ReferenceEquals(prior,link.Plain),"actual send entry rejects unconfirmed required trial without transmitting");
                 Set(form,"keyboardProbeSent",true);((CheckBox)Get(form,"pinyinConfirmed")).Checked=true;Call(form,"UpdateEditorActions");
@@ -112,19 +113,47 @@ class ConnectionModeTests
                 ((ComboBox)Get(form,"keyboardInput")).SelectedIndex=2;editor.Text=Protocol.KeyboardProbeText;Call(form,"UpdateEditorActions");
                 Require((bool)Call(form,"EditorTextValid")&&((Button)Get(form,"probePinyin")).Text.Contains("试输")&&((Button)Get(form,"probePinyin")).Enabled&&!editor.Visible,"GBK mixed text is accepted and trial is actionable");
                 ((CheckBox)Get(form,"requireProbe")).Checked=false;Require(editor.Visible&&((Control)Get(form,"directKeys")).Enabled,"GBK body available without trial");
-                ((Task)Call(form,"SendTypeJob",Protocol.KeyboardProbeText,true,false,true)).GetAwaiter().GetResult();Require(link.Plain[0]==6,"GBK sends actual encrypted mixed text without trial");
+                ((Task)Call(form,"SendTypeJob",Protocol.KeyboardProbeText,true,false,true)).GetAwaiter().GetResult();Require(link.Plain[0]==6&&link.Plain[1]==2&&link.Plain[4]==6&&((Control)Get(form,"gbkCompatible")).Visible,"GBK retains its own fast default after VUC");
                 Set(form,"supportsGbk",false);Call(form,"UpdateEditorActions");Require(!((Control)Get(form,"directKeys")).Enabled,"skipping trial does not bypass missing GBK firmware capability");
                 Set(form,"supportsGbk",true);((CheckBox)Get(form,"requireProbe")).Checked=true;
                 ClickTrial(form);
                 Require(link.Plain[0]==6&&link.Plain[1]==2&&link.Plain[2]==2,"real GBK probe sends selected fast mixed-input job");
                 Set(form,"keyboardProbeSent",true);((CheckBox)Get(form,"pinyinConfirmed")).Checked=true;
                 ((Task)Call(form,"SendTypeJob","病ABC123，中文!\nNext\tline",true,false,true)).GetAwaiter().GetResult();Require(link.Plain[0]==6,"confirmed GBK mixed body uses actual encrypted GBK job");
-                ((CheckBox)Get(form,"pinyinCompatible")).Checked=true;Require(!(bool)Get(form,"keyboardProbeSent")&&!((CheckBox)Get(form,"pinyinConfirmed")).Checked,"changing pace requires a fresh trial");
+                ((CheckBox)Get(form,"gbkCompatible")).Checked=true;Require(!(bool)Get(form,"keyboardProbeSent")&&!((CheckBox)Get(form,"pinyinConfirmed")).Checked,"changing pace requires a fresh trial");
                 ClickTrial(form);Require(link.Plain[1]==8&&link.Plain[4]==30,"compatibility trial uses slower complete Alt-number pacing");
                 Set(form,"keyboardProbeSent",true);((CheckBox)Get(form,"pinyinConfirmed")).Checked=true;editor.Text="雪人☃";Require(!((Control)Get(form,"directKeys")).Enabled&&((Label)Get(form,"editorSize")).Text.Contains("VUC"),"unrepresentable GBK input is rejected with a VUC recovery path");
                 ((ComboBox)Get(form,"keyboardInput")).SelectedIndex=1;Require((bool)Call(form,"EditorTextValid"),"same BMP text can be sent through VUC after its own trial");
-                ClickTrial(form);Require(link.Plain[0]==5&&Protocol.Utf8.GetString(link.Plain,3,link.Plain.Length-3)==Protocol.KeyboardProbeText,"real VUC mixed trial uses complete probe text, not the old Chinese-only raw keys");
+                ((CheckBox)Get(form,"gbkCompatible")).Checked=false;
+                ClickTrial(form);Require(link.Plain[0]==5&&link.Plain[1]==80&&link.Plain[2]==4&&Protocol.Utf8.GetString(link.Plain,3,link.Plain.Length-3)==Protocol.KeyboardProbeText,"VUC trial keeps stable pacing after method changes and an unchecked GBK speed preference");
                 ((CheckBox)Get(form,"pinyinConfirmed")).Checked=true;Require(editor.Visible&&editor.Text=="雪人☃","manual confirmation reveals the retained VUC draft");
+                using(var w=(Form)Call(form,"CreateVucSpeedDialog")) {
+                    ((NumericUpDown)w.Controls.Find("vucGap",true)[0]).Value=7;
+                    ((NumericUpDown)w.Controls.Find("vucSettle",true)[0]).Value=120;
+                    w.Close();
+                }
+                Require((int)Get(form,"vucGap")==4&&(int)Get(form,"vucSettle")==80,"cancel custom speed leaves compatibility defaults intact");
+                using(var w=(Form)Call(form,"CreateVucSpeedDialog")) {
+                    w.ShowInTaskbar=false;w.StartPosition=FormStartPosition.Manual;w.Location=new Point(-30000,-30000);w.Show(form);Application.DoEvents();
+                    ((NumericUpDown)w.Controls.Find("vucGap",true)[0]).Value=7;
+                    ((NumericUpDown)w.Controls.Find("vucSettle",true)[0]).Value=120;
+                    ((Button)w.Controls.Find("saveVucSpeed",true)[0]).PerformClick();
+                }
+                Require((int)Get(form,"vucGap")==7&&(int)Get(form,"vucSettle")==120&&!((CheckBox)Get(form,"pinyinConfirmed")).Checked,"saving custom speed resets trial confirmation");
+                Set(form,"vucGap",4);Set(form,"vucSettle",80);Call(form,"LoadVucSpeed",folder);
+                Require((int)Get(form,"vucGap")==7&&(int)Get(form,"vucSettle")==120,"custom speed survives settings reload");
+                ((ComboBox)Get(form,"keyboardInput")).SelectedIndex=2;Require(!((Control)Get(form,"vucSpeed")).Visible,"VUC custom speed hidden in GBK");
+                ((ComboBox)Get(form,"keyboardInput")).SelectedIndex=1;Require(((Control)Get(form,"vucSpeed")).Visible,"VUC custom speed visible after switching back");
+                ((CheckBox)Get(form,"requireProbe")).Checked=false;
+                ((Task)Call(form,"SendTypeJob","中A文",true,false,true)).GetAwaiter().GetResult();Require(link.Plain[1]==120&&link.Plain[2]==7,"actual body uses saved custom timing");
+                ((CheckBox)Get(form,"requireProbe")).Checked=true;ClickTrial(form);Require(link.Plain[1]==120&&link.Plain[2]==7,"actual trial uses the same custom timing as body");
+                using(var w=(Form)Call(form,"CreateVucSpeedDialog")) {
+                    w.ShowInTaskbar=false;w.StartPosition=FormStartPosition.Manual;w.Location=new Point(-30000,-30000);w.Show(form);Application.DoEvents();
+                    ((Button)w.Controls.Find("restoreVucSpeed",true)[0]).PerformClick();((Button)w.Controls.Find("saveVucSpeed",true)[0]).PerformClick();
+                }
+                Require((int)Get(form,"vucGap")==4&&(int)Get(form,"vucSettle")==80,"restore and save returns to 4ms/80ms");
+                File.WriteAllText(Path.Combine(folder,"vuc-speed.txt"),"0,999");Call(form,"LoadVucSpeed",folder);
+                Require((int)Get(form,"vucGap")==4&&(int)Get(form,"vucSettle")==80,"invalid saved speed cannot override defaults");
                 Set(form,"exiting",true);form.Close();
             }
             Console.WriteLine("PASS: modes/drafts, duplex bootstrap, encrypted pacing; 100 ready heartbeats and 20 presentation refreshes with zero text/visibility oscillation; Chinese capability/optional-probe gating and unsupported-character rejection. UI fixture only, no hardware or clipboard mutation.");return 0;

@@ -78,7 +78,7 @@ for (int i = 0; i < texts.Length; i++)
 }
 Console.WriteLine("PASS: Android <-> original C# encryption; Windows/Android compressed typing jobs; exact PowerShell bootstrap decoder, 10 cases. Physical HID/phone runtime not covered.");
 foreach (string platform in new[]{"windows","android"})
-foreach (string kind in new[]{"direct","delay","fast","pinyin","pinyin-compatible","probe","gbk","gbk-compatible"})
+foreach (string kind in new[]{"direct","delay","fast","pinyin","pinyin-7-120","pinyin-1-20","pinyin-50-200","probe","gbk","gbk-compatible"})
 {
     byte[] payload=File.ReadAllBytes(Path.Combine(folder,platform+"-"+kind+".data"));
     byte[] plain=new byte[payload.Length-44];
@@ -89,8 +89,8 @@ foreach (string kind in new[]{"direct","delay","fast","pinyin","pinyin-compatibl
     } else if(kind=="probe") {
         if(plain[0]!=3 || plain[1]!=0 || plain[2]!=35 || System.Text.Encoding.ASCII.GetString(plain[3..])!="vuc4e2d vuc6587 ")throw new Exception("Pinyin probe must be legacy raw HID with conservative pacing");
     } else if(kind.StartsWith("pinyin")) {
-        bool compatible=kind.EndsWith("compatible");
-        if(plain[0]!=5 || plain[1]!=(compatible?80:35) || plain[2]!=(compatible?4:1) || System.Text.Encoding.UTF8.GetString(plain[3..])!="中文Ab123，。\nNext\tline")throw new Exception("Pinyin pacing/text encoding mismatch");
+        string[] parts=kind.Split('-');int gap=parts.Length==1?4:int.Parse(parts[1]),settle=parts.Length==1?80:int.Parse(parts[2]);
+        if(plain[0]!=5 || plain[1]!=settle || plain[2]!=gap || System.Text.Encoding.UTF8.GetString(plain[3..])!="中文Ab123，。\nNext\tline")throw new Exception("VUC default or custom timing/text mismatch");
     } else if(kind=="direct") {
         if(plain[0]!=3 || plain[1]!=0 || plain[2]!=4 || System.Text.Encoding.ASCII.GetString(plain[3..])!="ASCII 123!\nNext\tline")throw new Exception("Direct-key encoding mismatch");
     } else {

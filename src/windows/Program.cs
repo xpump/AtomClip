@@ -20,11 +20,11 @@ using System.Windows.Forms;
 #endif
 [assembly: AssemblyDescription("USB and BLE text clipboard bridge")]
 #if BLE
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyFileVersion("0.2.0.0")]
 #else
-[assembly: AssemblyVersion("0.1.0.0")]
-[assembly: AssemblyFileVersion("0.1.0.0")]
+[assembly: AssemblyVersion("0.2.0.0")]
+[assembly: AssemblyFileVersion("0.2.0.0")]
 #endif
 
 namespace AtomClipUsb
@@ -81,11 +81,13 @@ namespace AtomClipUsb
         readonly NotifyIcon tray = new NotifyIcon { Icon = Theme.Brand, Text = "AtomClip USB", Visible = true };
         readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 250 };
         readonly ConcurrentQueue<Packet> incoming = new ConcurrentQueue<Packet>();
+        readonly object incomingGate = new object();
         readonly ConcurrentDictionary<string, TaskCompletionSource<bool>> waiting = new ConcurrentDictionary<string, TaskCompletionSource<bool>>();
         readonly HashSet<string> seen = new HashSet<string>(), discarded = new HashSet<string>();
         readonly Queue<string> seenOrder = new Queue<string>(), discardedOrder = new Queue<string>();
         readonly FileLog logger;
         readonly byte[] key;
+        readonly byte[] legacyKey;
         readonly bool receiveOnly;
         readonly string settingsPath;
         ILink link;
@@ -118,6 +120,7 @@ namespace AtomClipUsb
         string typeId;
         TaskCompletionSource<int> typeResult;
         bool typeBusy, supportsTyping, supportsReceiverStart, supportsDirectKeys, supportsStartupDelay;
+        string connectionStage = "", connectionError = "";
         readonly NumericUpDown startupDelay = new NumericUpDown { Minimum = 3, Maximum = 60, Value = 10, Width = 90 };
         readonly System.Windows.Forms.Timer jobProgress = new System.Windows.Forms.Timer { Interval = 1000 };
         EventHandler jobProgressHandler;
@@ -149,9 +152,22 @@ namespace AtomClipUsb
                 while (offset < key.Length && (n = stream.Read(key, offset, key.Length - offset)) > 0) offset += n;
                 if (offset != 32) throw new CryptographicException("EXE 配对信息不完整");
             }
+            legacyKey = (byte[])key.Clone();
+#if BLE
+            // The bootstrap template always contains the embedded legacy key, even
+            // when the active receiver uses a different runtime data key.
+            if(receiveOnly)using(var baseline=Assembly.GetExecutingAssembly().GetManifestResourceStream("AtomClip.PairingKey")){if(baseline==null||baseline.Length!=32||baseline.Read(legacyKey,0,32)!=32)throw new CryptographicException("启动模板配对资源缺失");}
+#endif
+
+#if BLE
+            LoadVucSpeed(directory); deviceBindings = new DeviceBindings(directory); boardCatalog = new BoardCatalog(); myBoards.Click += delegate { OpenBoards(); };
+#endif
             settingsPath = Path.Combine(directory, "port.txt");
             try { preferredPort = File.ReadAllText(settingsPath).Trim(); } catch (IOException) { } catch (UnauthorizedAccessException) { }
             BuildLayout();
+#if BLE
+            UpdateBoardSummary();
+#endif
             Theme.Primary(connect); Theme.Apply(this);
 #if BLE
             typeText.Click += async delegate { if (EditorTextValid()) await SendTypeJob(editor.Text, false); };
@@ -227,7 +243,7 @@ namespace AtomClipUsb
                 "单文件版 " + Assembly.GetExecutingAssembly().GetName().Version.ToString(3) + " 已启动；配对信息已内置。日志保留最近 7 天。");
             Shown += async delegate {
 #if BLE
-                desired = true; await ConnectNow();
+                if (deviceBindings.LoadError == null && deviceBindings.Registry.Active != null) { desired = true; await ConnectNow(); }
 #else
                 if (ports.SelectedItem != null) { desired = true; await ConnectNow(); }
 #endif
@@ -263,14 +279,14 @@ namespace AtomClipUsb
             BackColor = Theme.Background;
             ForeColor = Theme.Ink;
             StartPosition = FormStartPosition.CenterScreen;
-            Text = "AtomClip USB · 内网精简版 0.1.0";
+            Text = "AtomClip USB · 内网精简版 0.2.0";
             if (receiveOnly) { Text = "AtomClip PowerShell · 内网接收器"; tray.Text = "AtomClip PowerShell"; pause.Text = "暂停接收"; }
             var viewport = new Panel { Dock = DockStyle.Fill, AutoScroll = true };
             var root = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, RowCount = 0,
                 AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink,
                 Padding = new Padding(28), Margin = Padding.Empty };
             root.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            
+
             var heading = WrappedLabel("AtomClip");
             heading.Font = new Font(Font.FontFamily, 18, FontStyle.Bold);
             var usbHeader = new TableLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, ColumnCount = 3, Margin = new Padding(0, 0, 0, 20) };
@@ -354,7 +370,7 @@ namespace AtomClipUsb
             AutoScaleMode = AutoScaleMode.None;
             Font = new Font("Microsoft YaHei UI", 10);
             BackColor = Theme.Background; ForeColor = Theme.Ink;
-            Text = "AtomClip · 外网 0.1.0"; tray.Text = "AtomClip BLE";
+            Text = "AtomClip · 外网 0.2.0"; tray.Text = "AtomClip BLE";
             StartPosition = FormStartPosition.CenterScreen;
             var viewport = new BufferedViewport { Dock = DockStyle.Fill, AutoScroll = true };
             var root = new BufferedLayoutPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, Padding = new Padding(28) };
@@ -377,7 +393,8 @@ namespace AtomClipUsb
             };
             AddRow(root, header, false);
             var deviceActions = new FlowLayoutPanel { AutoSize = true, Dock = DockStyle.Fill, WrapContents = true, Margin = new Padding(0, 0, 0, 14) };
-            deviceActions.Controls.Add(connect); deviceActions.Controls.Add(provision); deviceActions.Controls.Add(more); AddRow(root, deviceActions, false);
+            FitButton(myBoards); deviceActions.Controls.Add(connect); deviceActions.Controls.Add(myBoards); deviceActions.Controls.Add(provision); deviceActions.Controls.Add(more); AddRow(root, deviceActions, false);
+            AddRow(root, currentBoard, false); root.SizeChanged += delegate { currentBoard.MaximumSize = new Size(Math.Max(120, root.ClientSize.Width - root.Padding.Horizontal), 0); };
             var modes = new SegmentPanel { AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, Anchor = AnchorStyles.Left, BackColor = Theme.ControlFill, Padding = new Padding(4), Margin = new Padding(0, 0, 0, 12) };
             foreach (var mode in new[] { modeProgram, modeNoProgram }) {
                 mode.Padding = new Padding(22, 8, 22, 8); mode.Margin = new Padding(0);
@@ -399,8 +416,8 @@ namespace AtomClipUsb
             AddRow(statusBox, state, false); AddRow(statusBox, counts, false); AddRow(root, statusBox, false);
             var setupContent = new CardPanel { AutoSize = true, Dock = DockStyle.Top, ColumnCount = 1, Padding = new Padding(18), BackColor = Color.White };
             setupContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-            
-            
+
+
             BuildRouteCard(setupContent); setupCard.Controls.Add(setupContent); FitDockedContent(setupCard, setupContent);
             setupCard.Margin = new Padding(0, 0, 0, 12); AddRow(root, setupCard, false);
             BuildKeyboardOptions(root);
@@ -427,6 +444,7 @@ namespace AtomClipUsb
             editorResult.Text = ""; editorResult.Margin = new Padding(0, 0, 0, 16); AddRow(root, editorResult, false);
             viewport.Controls.Add(root); Controls.Add(viewport);
             var menu = new ContextMenuStrip(); Theme.Menu(menu);
+            menu.Items.Add("我的开发板…", null, delegate { OpenBoards(); });
             menu.Items.Add("暂停 / 继续同步", null, delegate { TogglePause(); });
             menu.Items.Add("新开发板 / 固件更新…", null, delegate { OpenFirmwareInstaller(); });
             menu.Items.Add("查看运行日志", null, delegate { OpenLogWindow(); });
@@ -461,8 +479,8 @@ namespace AtomClipUsb
             sendEditor.ForeColor = Color.White;
             UpdateRoutePresentation();
             if (typeBusy) state.Text = "正在准备内网 · 请勿操作内网键鼠";
-            else if (connecting) state.Text = "正在连接开发板…";
-            else if (link == null || !link.Connected) state.Text = desired ? "正在等待开发板连接…" : "尚未连接开发板";
+            else if (connecting) state.Text = (connectionStage.Length == 0 ? "正在连接开发板…" : connectionStage) + (connectionError.Length == 0 ? "" : "\r\n上次未完成：" + connectionError);
+            else if (link == null || !link.Connected) state.Text = connectionError.Length > 0 ? (desired ? "等待重连：" : "连接未完成：") + connectionError : desired ? "正在等待开发板连接…" : "尚未连接开发板";
             else if (paused) state.Text = "同步已暂停 · 可在“更多”中恢复";
             else if (KeyboardRoute) state.Text = peerReady ? "请先退出内网接收器，再使用 USB 键盘输入" : !supportsDirectKeys ? "开发板已连接 · 请更新固件以使用 USB 键盘" : "USB 键盘已连接 · 请将内网光标放好";
             else if (peerReady) state.Text = DuplexRoute ? "已就绪 · 可传输文字，内网按 B 切换回传" : "已就绪 · 可双向传输文字";
@@ -532,7 +550,7 @@ namespace AtomClipUsb
             var old = link; link = null;
             if (old != null) try { old.Dispose(); } catch (Exception ex) { AddLog("关闭串口失败：" + Program.Error(ex)); }
             foreach (var t in waiting.Values) t.TrySetCanceled(); waiting.Clear();
-            Packet unused; while (incoming.TryDequeue(out unused)) { }
+            lock (incomingGate) { Packet unused; while (incoming.TryDequeue(out unused)) { } }
             sequence = GetClipboardSequenceNumber();
 #if BLE
             UpdateEditorActions();
@@ -540,38 +558,20 @@ namespace AtomClipUsb
         }
         void Stop()
         {
+#if BLE
+            connectionStage = connectionError = "";
+#endif
             desired = false; ResetLink(); connect.Text = "连接"; ports.Enabled = true;
             state.Text = "尚未连接"; AddLog("本机通道已断开。");
 #if BLE
             UpdateEditorActions();
 #endif
         }
-        async Task ConnectNow()
+        void SubscribeLink(ILink candidate, CancellationToken token)
         {
-            if (connecting || !desired) return;
-            connecting = true; ResetLink(); connect.Text = "断开"; state.Text = "正在连接…";
-            connectionCts = new CancellationTokenSource(); var token = connectionCts.Token;
-            try
-            {
-#if BLE
-                string name = "BLE";
-                var candidate = new BleLink(); link = candidate;
-                using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token))
+            candidate.Received += delegate(Packet packet)
                 {
-                    timeout.CancelAfter(20000);
-                    ulong address = await BleLink.Scan(timeout.Token);
-                    await candidate.Open(address, timeout.Token);
-                }
-#else
-                RefreshPorts();
-                string name = ports.SelectedItem == null ? "" : ports.SelectedItem.ToString();
-                if (name.Length == 0) throw new IOException("请选择开发板 COM 口；插好板子后点击刷新串口。");
-                var candidate = await Task.Run(() => new UsbLink(name), token);
-#endif
-                if (token.IsCancellationRequested) { candidate.Dispose(); token.ThrowIfCancellationRequested(); }
-                link = candidate;
-                candidate.Received += delegate(Packet packet)
-                {
+                    lock (incomingGate) {
                     if (token.IsCancellationRequested) return;
                     if (packet.Kind == Protocol.Ack)
                     {
@@ -579,7 +579,50 @@ namespace AtomClipUsb
                         if (id != null && waiting.TryGetValue(id, out ack)) ack.TrySetResult(true);
                     }
                     else if (incoming.Count < 16) incoming.Enqueue(packet);
+                    }
                 };
+        }
+        async Task ConnectNow()
+        {
+            if (connecting || !desired) return;
+#if BLE
+            connectionStage = "正在扫描已绑定开发板…";
+#endif
+            connecting = true; ResetLink(); connect.Text = "断开"; state.Text = "正在连接…";
+            connectionCts = new CancellationTokenSource(); var token = connectionCts.Token;
+            try
+            {
+#if BLE
+                var selectedBinding = deviceBindings.Registry.Active;
+                if (deviceBindings.LoadError != null) throw new CryptographicException(deviceBindings.LoadError);
+                if (selectedBinding == null) { desired = false; throw new IOException("请先从“我的开发板”通过USB绑定，或导入加密配置并设为当前。"); }
+                Buffer.BlockCopy(selectedBinding == null ? legacyKey : selectedBinding.DataKey, 0, key, 0, 32);
+                string name = selectedBinding.Alias;
+                var candidate = new BleLink(selectedBinding); link = candidate;
+                candidate.Progress += message => { if (!token.IsCancellationRequested && ReferenceEquals(link, candidate) && !IsDisposed) { connectionStage = message; UpdateBlePresentation(); AddLog("连接阶段：" + message); } };
+                SubscribeLink(candidate, token);
+                candidate.Identified += visible => BeginInvoke((Action)(() => MessageBox.Show(this, visible ? "已请求开发板闪灯。" : "此板型无已知LED，请通过USB核对完整编号。", "识别开发板")));
+                using (var timeout = CancellationTokenSource.CreateLinkedTokenSource(token)) { timeout.CancelAfter(60000); await candidate.Open(timeout.Token); }
+                connectionError = "";
+                if (candidate.AuthenticatedInfo != null) { var info = candidate.AuthenticatedInfo; try { deviceBindings.Change(r => { V2Protocol.Binding existing; if (r.Confirmed.TryGetValue(info.Number, out existing)) existing.DeviceInfo = info; }); } catch(Exception) { AddLog("身份已验证，但最新设备信息未能保存。"); } UpdateBoardSummary(); }
+#else
+                RefreshPorts();
+                string name = ports.SelectedItem == null ? "" : ports.SelectedItem.ToString();
+                if (name.Length == 0) throw new IOException("请选择开发板 COM 口；插好板子后点击刷新串口。");
+                var candidate = await Task.Run(() => new UsbLink(name), token);
+                link = candidate;
+                if (!receiveOnly)
+                {
+                    Buffer.BlockCopy(legacyKey, 0, key, 0, 32);
+                    byte[] deviceDataKey = await UsbManagement.ReadDataKey(candidate, token);
+                    if (deviceDataKey != null) { Buffer.BlockCopy(deviceDataKey, 0, key, 0, 32); Array.Clear(deviceDataKey, 0, 32); }
+                }
+#endif
+                if (token.IsCancellationRequested) { candidate.Dispose(); token.ThrowIfCancellationRequested(); }
+                link = candidate;
+#if !BLE
+                SubscribeLink(candidate, token);
+#endif
                 preferredPort = name;
                 try { Directory.CreateDirectory(Path.GetDirectoryName(settingsPath)); File.WriteAllText(settingsPath, name); }
                 catch (Exception ex) { AddLog("端口设置未能保存：" + Program.Error(ex)); }
@@ -589,6 +632,10 @@ namespace AtomClipUsb
             catch (Exception ex)
             {
                 if (!token.IsCancellationRequested) AddLog("连接失败：" + Program.Error(ex));
+#if BLE
+                if (!token.IsCancellationRequested) connectionError = connectionStage + " " + (ex is OperationCanceledException ? "连接超时，请重试" : Program.Error(ex));
+                if (ex is CryptographicException) desired = false;
+#endif
                 ResetLink(); nextRetry = DateTime.UtcNow.AddSeconds(5); ports.Enabled = true;
                 state.Text = desired ? "等待重连…" : "尚未连接";
             }
@@ -601,6 +648,10 @@ namespace AtomClipUsb
         async Task Tick()
         {
             if (connecting) return;
+#if BLE
+            var disconnectedBle = link as BleLink;
+            if (disconnectedBle != null && !disconnectedBle.Connected && disconnectedBle.StopReconnect) { string reason = disconnectedBle.Failure ?? "身份验证失败，请核对已绑定开发板。"; Stop(); AddLog(reason); return; }
+#endif
             if (desired && (link == null || !link.Connected))
             {
                 if (DateTime.UtcNow >= nextRetry) { nextRetry = DateTime.UtcNow.AddSeconds(5); await ConnectNow(); }
@@ -629,6 +680,8 @@ namespace AtomClipUsb
                     bool fast = p.Payload.Length >= 7 && p.Payload[6] == 1;
                     bool pinyin = p.Payload.Length >= 8 && p.Payload[7] == 1;
                     bool gbk = p.Payload.Length >= 9 && p.Payload[8] == 1;
+                    var secureLink = link as BleLink; var trustedInfo = secureLink == null ? null : secureLink.AuthenticatedInfo;
+                    if (trustedInfo != null) { uint caps = trustedInfo.Capabilities; typing &= (caps & 2) != 0; receiverStart &= (caps & 4) != 0; startup &= (caps & 4) != 0; fast &= (caps & 4) != 0; direct &= (caps & 2) != 0; pinyin &= (caps & 16) != 0; gbk &= (caps & 8) != 0; }
                     changed |= typing != supportsTyping || receiverStart != supportsReceiverStart || direct != supportsDirectKeys || startup != supportsStartupDelay || fast != supportsFastTyping || pinyin != supportsPinyin || gbk != supportsGbk;
 #endif
                     if (ready != peerReady) {
@@ -851,7 +904,11 @@ namespace AtomClipUsb
             using (var stream = Assembly.GetExecutingAssembly().GetManifestResourceStream("AtomClip.DuplexBootstrap"))
             {
                 if (stream == null || stream.Length > Protocol.MaxText) throw new InvalidDataException("接收器启动资源缺失或过长");
-                using (var reader = new StreamReader(stream, Protocol.Utf8)) return reader.ReadToEnd();
+                using (var reader = new StreamReader(stream, Protocol.Utf8)) {
+                    string template = reader.ReadToEnd(), original = Convert.ToBase64String(legacyKey); int at = template.IndexOf(original, StringComparison.Ordinal);
+                    if (at < 0 || template.IndexOf(original, at + original.Length, StringComparison.Ordinal) >= 0) throw new InvalidDataException("启动模板配对位置无效");
+                    string active = template.Replace(original, Convert.ToBase64String(key)); if (Protocol.Utf8.GetByteCount(active) > Protocol.MaxText) throw new InvalidDataException("运行时启动文本超过16KiB"); return active;
+                }
             }
         }
         void ShowReceiverSteps()
@@ -860,6 +917,7 @@ namespace AtomClipUsb
         }
         async Task<int> SendTypeJob(string text, bool initializeReceiver, bool openSystemReceiver = false, bool directKeyboard = false)
         {
+            var secureLink=link as BleLink;if(secureLink!=null&&secureLink.AuthenticatedInfo!=null){uint caps=secureLink.AuthenticatedInfo.Capabilities;if((caps&2)==0||(!directKeyboard&&(caps&4)==0)){AddLog("所选开发板不支持此输入动作。");return -1;}}
             bool probe = directKeyboard && pinyinProbeInFlight;
             bool pinyin = directKeyboard && PinyinRoute, gbk = directKeyboard && GbkRoute;
             if (directKeyboard) text = text.Replace("\r\n", "\n");
@@ -886,7 +944,7 @@ namespace AtomClipUsb
             var current = link; var token = connectionCts.Token;
             try
             {
-                byte[] payload = gbk ? Protocol.CreateGbkJob(text, pinyinCompatible.Checked, key) : pinyin ? Protocol.CreatePinyinJob(text, pinyinCompatible.Checked, key) : directKeyboard ? Protocol.CreateDirectKeyJob(text, key) : openSystemReceiver ? Protocol.CreateReceiverOpenJob(key) :
+                byte[] payload = gbk ? Protocol.CreateGbkJob(text, gbkCompatible.Checked, key) : pinyin ? Protocol.CreatePinyinJob(text, vucGap, vucSettle, key) : directKeyboard ? Protocol.CreateDirectKeyJob(text, key) : openSystemReceiver ? Protocol.CreateReceiverOpenJob(key) :
                     Protocol.CreateTypeJob(text, automaticPaste, fastInput.Checked && supportsFastTyping ? (byte)1 : (byte)4, supportsStartupDelay ? (byte)startupDelay.Value : (byte)0, key);
                 typeId = Protocol.Id(payload); typeResult = new TaskCompletionSource<int>();
                 int chars = directKeyboard ? text.Replace("\r\n", "\n").Length : openSystemReceiver ? 100 : 260 + 4 * ((payload.Length - 47 + 2) / 3);
@@ -895,9 +953,10 @@ namespace AtomClipUsb
                 int upper = (directKeyboard ? 10 : (int)startupDelay.Value + 15) + (int)Math.Ceiling(chars * (fast ? .020 : .035));
                 if (pinyin || gbk) {
                     int unicode = 0; foreach (char c in text) if (c >= 128) unicode++;
-                    lower = 3 + (int)Math.Ceiling(unicode * (gbk ? pinyinCompatible.Checked ? .125 : .029 : pinyinCompatible.Checked ? .16 : .07) + (text.Length - unicode) * .003);
-                    upper = 10 + (int)Math.Ceiling(unicode * (gbk ? pinyinCompatible.Checked ? .30 : .15 : pinyinCompatible.Checked ? .45 : .25) + (text.Length - unicode) * .020);
+                    lower = 3 + (int)Math.Ceiling(unicode * (gbk ? gbkCompatible.Checked ? .125 : .029 : .16) + (text.Length - unicode) * .003);
+                    upper = 10 + (int)Math.Ceiling(unicode * (gbk ? gbkCompatible.Checked ? .30 : .15 : .45) + (text.Length - unicode) * .020);
                 }
+                if (pinyin) { double seconds = Protocol.PinyinMilliseconds(text, vucGap, vucSettle) / 1000.0; lower = 3 + (int)Math.Ceiling(seconds); upper = 10 + (int)Math.Ceiling(seconds * 1.5 + chars * .020); }
                 var elapsed = Stopwatch.StartNew();
                 EventHandler progress = delegate {
                     string value = "已用 " + (int)elapsed.Elapsed.TotalSeconds + " 秒 · 预计约 " + lower + "–" + upper + " 秒；等待开发板完成回执，请勿操作内网键鼠。";

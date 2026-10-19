@@ -1,53 +1,16 @@
 using System;
-using System.Diagnostics;
 using System.IO;
+using System.IO.Compression;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using System.Threading.Tasks;
 using AtomClipUsb;
-class FlashTests
-{
- static void Require(bool value,string message){if(!value)throw new Exception(message);}
- static async Task CheckPlan(){
-  int calls=0;
-  await FlashPlan.Execute("COM14",@"C:\path with spaces\firmware.bin",delegate(string args){
-   calls++;
-   if(calls==1){Require(args.EndsWith("flash-id")&&!args.Contains("write-flash"),"probe before write");return Task.FromResult(new FlashCommandResult{ExitCode=0,Output="Detected flash size: 8MB"});}
-   Require(args.Contains("write-flash 0x0 \"C:\\path with spaces\\firmware.bin\"")&&args.Contains("--port COM14"),"address, port, quoted path");
-   return Task.FromResult(new FlashCommandResult{ExitCode=0,Output="Hash of data verified."});
-  });Require(calls==2,"one probe, one write");
-  foreach(string output in new[]{"Detected flash size: 4MB","Detected flash size: 16MB","no size detected"}){
-   calls=0;try{await FlashPlan.Execute("COM4","f.bin",delegate(string args){calls++;return Task.FromResult(new FlashCommandResult{ExitCode=0,Output=output});});throw new Exception("unsafe flash accepted");}
-   catch(IOException){Require(calls==1,"incorrect size blocks write");}
-  }
-  calls=0;try{await FlashPlan.Execute("COM4","f.bin",delegate(string args){calls++;return Task.FromResult(new FlashCommandResult{ExitCode=2,Output="Wrong chip"});});throw new Exception("wrong chip accepted");}
-  catch(IOException){Require(calls==1,"failed probe blocks write");}
-  foreach(int code in new[]{0,1}){
-   calls=0;try{await FlashPlan.Execute("COM4","f.bin",delegate(string args){calls++;return Task.FromResult(new FlashCommandResult{ExitCode=calls==1?0:code,Output=calls==1?"Detected flash size: 8MB":"No verification"});});throw new Exception("unverified flash accepted");}
-   catch(IOException){Require(calls==2,"exit code and hash verification required");}
-  }
-  calls=0;try{await FlashPlan.Execute("COM4 & injected","f.bin",delegate(string args){calls++;return Task.FromResult(new FlashCommandResult());});throw new Exception("invalid port accepted");}
-  catch(ArgumentException){Require(calls==0,"invalid port blocked before process");}
- }
- static int Main(){
-  string folder=Path.Combine(Path.GetTempPath(),"AtomClip-resource-test-"+Guid.NewGuid().ToString("N"));
-  try{
-   CheckPlan().GetAwaiter().GetResult();Directory.CreateDirectory(folder);
-   var extract=typeof(FlashPlan).Assembly.GetType("AtomClipUsb.FirmwareInstaller").GetMethod("Extract",BindingFlags.Static|BindingFlags.NonPublic);
-   string tool=(string)extract.Invoke(null,new object[]{"esptool.exe",folder});
-   string firmware=(string)extract.Invoke(null,new object[]{"AtomClip-S3U.bin",folder});
-   Require(new FileInfo(firmware).Length==8388608,"merged 8MB image extracted and SHA256 verified");
-   using(var process=Process.Start(new ProcessStartInfo(tool,"--help"){UseShellExecute=false,CreateNoWindow=true,RedirectStandardOutput=true,RedirectStandardError=true})){
-    var stdout=process.StandardOutput.ReadToEndAsync();var stderr=process.StandardError.ReadToEndAsync();
-    Require(process.WaitForExit(30000),"tool help returned");Require(process.ExitCode==0&&stdout.Result.Contains("write-flash"),"embedded offline tool runs");stderr.GetAwaiter().GetResult();
-   }
-   Console.WriteLine("PASS: flash plan probe/8MB/chip/port/write/hash guards; embedded resources SHA256 verified; bundled esptool --help executed. No hardware flash or serial access.");return 0;
-  }catch(Exception ex){Console.WriteLine("FAIL: "+ex.GetBaseException().Message);return 1;}
-  finally{
-   // Windows can briefly retain the just-executed embedded tool while scanning it.
-   for(int attempt=0;attempt<3&&Directory.Exists(folder);attempt++){
-    try{Directory.Delete(folder,true);}catch(IOException){if(attempt==2)Console.WriteLine("NOTE: temporary test tools retained for later cleanup.");else System.Threading.Thread.Sleep(100);}
-    catch(UnauthorizedAccessException){if(attempt==2)Console.WriteLine("NOTE: temporary test tools retained for later cleanup.");else System.Threading.Thread.Sleep(100);}
-   }
-  }
- }
+class FlashTests {
+ static int checks;
+ static void Require(bool value,string message){checks++;if(!value)throw new Exception(message);}
+ static FirmwareBuild Fixture(string dir){var b=new FirmwareBuild{schema=2,profile=264,flashBytes=8388608,chip="esp32s3",segments=new FirmwareSegment[4]};int[] off={0,32768,57344,65536},len={18720,3072,8192,65540};for(int i=0;i<4;i++){byte[] data=new byte[len[i]];for(int j=0;j<data.Length;j++)data[j]=(byte)(j*31+i);if(i==0||i==3){data[0]=233;data[12]=9;data[13]=0;}string name="test-"+i+".bin";File.WriteAllBytes(Path.Combine(dir,name),data);b.segments[i]=new FirmwareSegment{offset=off[i],length=len[i],file=name,sha256=FirmwareBuild.Hash(data)};}b.Validate(dir);return b;}
+ static async Task Scenario(string folder,FirmwareBuild b,string fault,bool factory,bool success){int calls=0,writes=0,erases=0;try{await FlashPlan.Execute("COM14",folder,b,factory,delegate(string args){calls++;Require(args.Contains("--port COM14"),"explicit port");string output="";int code=0;if(args.EndsWith("flash-id")){output=fault=="size"?"Detected flash size: 4MB":"Detected flash size: 8MB";if(fault=="chip")code=2;}else if(args.Contains("read-mem"))output="0x6000703c = "+(fault=="opi"?"0x00000200":"0x00000000");else if(args.Contains("read-flash")){byte[] table=fault=="partition"?new byte[3072]:File.ReadAllBytes(Path.Combine(folder,b.segments[1].file));File.WriteAllBytes(Path.Combine(folder,"existing-partitions.bin"),table);if(fault=="read")code=1;}else if(args.EndsWith("erase-flash"))erases++;else if(args.Contains("write-flash")){writes++;Require(args.Contains("0x0 ")&&args.Contains("0x8000 ")&&args.Contains("0xe000 ")&&args.Contains("0x10000 ")&&!args.Contains("0x9000 "),"four offsets preserve NVS");if(fault=="write")code=2;}else if(args.Contains("verify-flash")){output=string.Concat(System.Linq.Enumerable.Repeat("Verification successful (digest matched).\n",fault=="verify"?3:4));if(fault=="verify-exit")code=2;}else throw new Exception("unexpected command "+args);return Task.FromResult(new FlashCommandResult{ExitCode=code,Output=output});});Require(success,"unsafe success "+fault);}catch(IOException){Require(!success,"unexpected rejection "+fault);}if(fault=="chip"||fault=="size"||fault=="opi"||fault=="partition"&&!factory||fault=="read")Require(writes==0&&erases==0,"probe failure never erases");if(success)Require(writes==1&&erases==(factory?1:0),"explicit factory policy");}
+ static int Main(){string folder=Path.Combine(Path.GetTempPath(),"AtomClip-flash-test-"+Guid.NewGuid().ToString("N"));try{Directory.CreateDirectory(folder);var b=Fixture(folder);Scenario(folder,b,"",false,true).GetAwaiter().GetResult();foreach(string f in new[]{"chip","size","opi","partition","read","write","verify","verify-exit"})Scenario(folder,b,f,false,false).GetAwaiter().GetResult();Scenario(folder,b,"partition",true,true).GetAwaiter().GetResult();int calls=0;try{FlashPlan.Execute("COM4 & injected",folder,b,false,args=>{calls++;return Task.FromResult(new FlashCommandResult());}).GetAwaiter().GetResult();throw new Exception("port injection accepted");}catch(IOException){Require(calls==0,"invalid port blocked before process");}var seg=b.segments[0];seg.sha256="bad";try{b.Validate(folder);throw new Exception("bad SHA accepted");}catch(IOException){checks++;}seg.sha256=FirmwareBuild.Hash(File.ReadAllBytes(Path.Combine(folder,seg.file)));seg.offset=36864;try{b.Validate(folder);throw new Exception("NVS overlap accepted");}catch(IOException){checks++;}
+ var extract=typeof(FlashPlan).Assembly.GetType("AtomClipUsb.FirmwareInstaller").GetMethod("Extract",BindingFlags.Static|BindingFlags.NonPublic);if(typeof(FlashPlan).Assembly.GetManifestResourceStream("AtomClip.Flash.firmware.zip")!=null){string zip=(string)extract.Invoke(null,new object[]{"firmware.zip",folder});string package=Path.Combine(folder,"bundle");ZipFile.ExtractToDirectory(zip,package);Require(FirmwareBundle.Load(package).builds.Length==4,"all embedded profile segments validated");extract.Invoke(null,new object[]{"esptool.exe",folder});}
+ Console.WriteLine("PASS: segmented flash guards, factory policy and checksums: "+checks+" checks. No hardware accessed.");return 0;}catch(Exception ex){Console.WriteLine("FAIL: "+ex.GetBaseException().Message);return 1;}finally{if(Directory.Exists(folder))Directory.Delete(folder,true);}}
 }

@@ -1,8 +1,8 @@
-﻿param([string]$OutputFile=(Join-Path $PSScriptRoot '..\..\AtomClip-v0.1.0-source.zip'))
+param([string]$OutputFile=(Join-Path $PSScriptRoot '..\..\AtomClip-v0.2.0-source.zip'))
 $ErrorActionPreference='Stop';$repo=Split-Path -Parent $PSScriptRoot
 & (Join-Path $PSScriptRoot 'Check-Publish.ps1')
 $stage=Join-Path $env:TEMP ('AtomClip-source-'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $stage -Force | Out-Null
-foreach($name in @('assets','src','scripts','tests','docs','licenses','.github')){
+foreach($name in @('assets','boards','src','scripts','tests','docs','licenses','.github')){
  $from=Join-Path $repo $name;if(!(Test-Path -LiteralPath $from)){continue}
  foreach($file in (Get-ChildItem -LiteralPath $from -Recurse -File | Where-Object {$_.FullName -notmatch '[\\/](bin|obj)[\\/]'})){
   $relative=$file.FullName.Substring($repo.Length+1);$target=Join-Path $stage $relative

@@ -3,7 +3,7 @@
 #include <mbedtls/md.h>
 #include <mbedtls/base64.h>
 #include <mbedtls/platform_util.h>
-#include "PairingKey.h"
+#include <atomic>
 #include "PinyinInput.h"
 #include "GbkInput.h"
 
@@ -11,13 +11,28 @@ namespace typing {
 static USBHIDKeyboard keyboard;
 static QueueHandle_t jobs;
 static bool (*online)();
-static void (*result)(const uint8_t*,uint8_t);
+static bool (*authorized)();
+static uint32_t (*currentEpoch)();
+static void (*result)(const uint8_t*,uint8_t,uint32_t);
+static int buttonPin=-1;
+static uint32_t capabilities=0;
+static uint32_t activeEpoch=0;
+static uint8_t jobKey[32]{};
+struct Job {
+ ac::Bytes frame;uint8_t key[32];uint32_t epoch;
+ Job(ac::Bytes&& b,const uint8_t* k,uint32_t e):frame(std::move(b)),epoch(e){memcpy(key,k,32);}
+ ~Job(){mbedtls_platform_zeroize(key,32);}
+};
 static uint8_t recent[16][16],outcomes[16];
 static unsigned recentCount=0,recentNext=0;
 static constexpr char BOOTSTRAP[] = "powershell -NoP -NonI -C \"$s='';while($x=[Console]::ReadLine()){$s+=$x};$m=[IO.MemoryStream]::new([Convert]::FromBase64String($s));Set-Clipboard ([IO.StreamReader]::new([IO.Compression.GZipStream]::new($m,[IO.Compression.CompressionMode]0))).ReadToEnd()\"";
 static_assert(sizeof(BOOTSTRAP)<259,"Run dialog command must remain short");
 static constexpr char RECEIVER_START[] = "powershell -NoP -STA -NoExit -C \"Remove-Module PSReadLine -EA SilentlyContinue\"";
 inline bool validJob(const ac::Bytes& p) {
+  if(p.empty() || !(capabilities&2))return false;
+  if((p[0]==1 || p[0]==2 || p[0]==4) && !(capabilities&4))return false;
+  if(p[0]==5 && !(capabilities&16))return false;
+  if(p[0]==6 && !(capabilities&8))return false;
   if(p.size()>5 && p[0]==6)return p[1]>=1 && p[1]<=50 && p[2]>=1 && p[2]<=50 && p[3]>=1 && p[3]<=100 && p[4]>=1 && p[4]<=100 && gbk::valid(p.data()+5,p.size()-5);
   if(p.size()==3)return p[0]==2 && p[1]==0 && p[2]>=1 && p[2]<=50;
   if(p.size()>3 && p[0]==5)return p[1]>=20 && p[1]<=200 && p[2]>=1 && p[2]<=50 && pinyin::valid(p.data()+3,p.size()-3);
@@ -33,10 +48,10 @@ inline bool validJob(const ac::Bytes& p) {
 inline ac::Bytes resultFrame(const uint8_t* id,uint8_t status) {
   uint8_t payload[33],signedData[18],mac[32];
   memcpy(payload,id,16);payload[16]=status;signedData[0]=6;memcpy(signedData+1,payload,17);
-  mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),PAIRING_KEY,32,signedData,18,mac);
+  mbedtls_md_hmac(mbedtls_md_info_from_type(MBEDTLS_MD_SHA256),jobKey,32,signedData,18,mac);
   memcpy(payload+17,mac,16);return ac::frame(6,payload,33);
 }
-inline bool allowed() { return !online() && digitalRead(41)!=LOW; }
+inline bool allowed() { return authorized() && activeEpoch==currentEpoch() && !online() && (buttonPin<0 || digitalRead(buttonPin)!=LOW); }
 inline bool waitSafe(uint32_t duration) {
   uint32_t start=millis();
   for(;;){uint32_t elapsed=uint32_t(millis()-start);if(elapsed>=duration)break;if(!allowed())return false;delay(std::min(uint32_t(5),duration-elapsed));}
@@ -50,7 +65,7 @@ inline bool ascii(const char* s,size_t length,uint8_t gap) {
     if(gap && !waitSafe(gap))return false;
   }return true;
 }
-inline void chord(uint8_t modifier,uint8_t key) { keyboard.press(modifier);keyboard.press(key);delay(35);keyboard.releaseAll(); }
+inline void chord(uint8_t modifier,uint8_t key) { if(!allowed())return;keyboard.press(modifier);if(allowed())keyboard.press(key);delay(35);keyboard.releaseAll(); }
 inline bool run(const ac::Bytes& plain) {
   if(plain[0]==6) {
     if(!waitSafe(3000))return false;
@@ -58,7 +73,7 @@ inline bool run(const ac::Bytes& plain) {
       [&plain](uint8_t c){char one=char(c);return ascii(&one,1,plain[2]);},
       [&plain](uint16_t code){
         bool ok=gbk::emit(code,plain[1],plain[2],plain[3],plain[4],
-          [](uint8_t key,bool down){return (down?keyboard.pressRaw(key):keyboard.releaseRaw(key))!=0;},
+          [](uint8_t key,bool down){if(down&&!allowed())return false;return (down?keyboard.pressRaw(key):keyboard.releaseRaw(key))!=0;},
           [](uint8_t ms){delay(ms);});
         keyboard.releaseAll();return ok;
       },[](){return allowed();});
@@ -117,39 +132,39 @@ inline bool run(const ac::Bytes& plain) {
 }
 inline void worker(void*) {
   for(;;){
-    ac::Bytes* frame=nullptr;if(xQueueReceive(jobs,&frame,portMAX_DELAY)!=pdTRUE)continue;
-    if(!frame)continue;
+    Job* job=nullptr;if(xQueueReceive(jobs,&job,portMAX_DELAY)!=pdTRUE)continue;
+    if(!job)continue;ac::Bytes* frame=&job->frame;activeEpoch=job->epoch;memcpy(jobKey,job->key,32);
     size_t n=frame->size()>=57?frame->size()-57:0;
     ac::Bytes plain(n);
     uint8_t id[16]={0};bool authentic=false;
     if(frame->size()>=57 && n>=3){
       const uint8_t* b=frame->data()+9;memcpy(id,b,16);
       mbedtls_gcm_context g;mbedtls_gcm_init(&g);
-      if(mbedtls_gcm_setkey(&g,MBEDTLS_CIPHER_ID_AES,PAIRING_KEY,256)==0)
+      if(mbedtls_gcm_setkey(&g,MBEDTLS_CIPHER_ID_AES,jobKey,256)==0)
         authentic=mbedtls_gcm_auth_decrypt(&g,n,b+16,12,b,16,b+28+n,16,b+28,plain.data())==0;
       mbedtls_gcm_free(&g);
     }
-    delete frame;
-    if(!authentic)continue;
+    delete job;
+    if(!authentic){mbedtls_platform_zeroize(jobKey,32);continue;}
     int known=-1;for(unsigned i=0;i<recentCount;i++)if(memcmp(recent[i],id,16)==0){known=int(i);break;}
-    if(known>=0){result(id,outcomes[known]);mbedtls_platform_zeroize(plain.data(),plain.size());continue;}
+    if(known>=0){result(id,outcomes[known],activeEpoch);mbedtls_platform_zeroize(plain.data(),plain.size());mbedtls_platform_zeroize(jobKey,32);continue;}
     unsigned slot=recentNext;recentNext=(recentNext+1)%16;recentCount=std::min(16u,recentCount+1);
     memcpy(recent[slot],id,16);outcomes[slot]=3;
     bool valid=validJob(plain);
-    if(!valid || !allowed()){result(id,3);mbedtls_platform_zeroize(plain.data(),plain.size());continue;}
-    result(id,0);
+    if(!valid || !allowed()){result(id,3,activeEpoch);mbedtls_platform_zeroize(plain.data(),plain.size());mbedtls_platform_zeroize(jobKey,32);continue;}
+    result(id,0,activeEpoch);
     outcomes[slot]=run(plain)?2:4;keyboard.releaseAll();
-    mbedtls_platform_zeroize(plain.data(),plain.size());result(id,outcomes[slot]);
+    mbedtls_platform_zeroize(plain.data(),plain.size());result(id,outcomes[slot],activeEpoch);mbedtls_platform_zeroize(jobKey,32);
   }
 }
-inline void begin(bool (*isOnline)(),void (*sendResult)(const uint8_t*,uint8_t)) {
-  online=isOnline;result=sendResult;pinMode(41,INPUT_PULLUP);
-  jobs=xQueueCreate(1,sizeof(ac::Bytes*));
+inline void begin(bool (*isOnline)(),void (*sendResult)(const uint8_t*,uint8_t,uint32_t),bool (*isAuthorized)(),uint32_t (*epoch)(),int safetyButton,uint32_t allowedCapabilities) {
+  online=isOnline;result=sendResult;authorized=isAuthorized;currentEpoch=epoch;buttonPin=safetyButton;capabilities=allowedCapabilities;if(buttonPin>=0)pinMode(buttonPin,INPUT_PULLUP);
+  jobs=xQueueCreate(1,sizeof(Job*));
   if(jobs)xTaskCreate(worker,"typing",8192,nullptr,1,nullptr);
 }
-inline void submit(ac::Bytes&& frame) {
+inline void submit(ac::Bytes&& frame,const uint8_t* dataKey,uint32_t epoch) {
   if(!jobs)return;
-  auto* b=new(std::nothrow) ac::Bytes(std::move(frame));
+  auto* b=new(std::nothrow) Job(std::move(frame),dataKey,epoch);
   if(b && xQueueSend(jobs,&b,0)!=pdTRUE)delete b;
 }
 }

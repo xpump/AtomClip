@@ -12,6 +12,7 @@ using AtomClipUsb;
 
 class HardwareTests
 {
+    static BleLink SelectedBoard(){string directory=Environment.GetEnvironmentVariable("ATOMCLIP_TEST_DEVICE_STORE");if(string.IsNullOrEmpty(directory))throw new InvalidOperationException("Set ATOMCLIP_TEST_DEVICE_STORE to the explicitly prepared protected device store; no first-device selection is allowed.");var type=typeof(BleLink).Assembly.GetType("AtomClipUsb.DeviceBindings");var store=Activator.CreateInstance(type,new object[]{directory});var registry=type.GetField("Registry").GetValue(store);var binding=(V2Protocol.Binding)registry.GetType().GetProperty("Active").GetValue(registry,null);if(type.GetField("LoadError").GetValue(store)!=null||binding==null)throw new InvalidOperationException("Select a confirmed v2 device in the prepared store first.");return new BleLink(binding);}
     static readonly BlockingCollection<Packet> usbPackets = new BlockingCollection<Packet>(), blePackets = new BlockingCollection<Packet>();
     static async Task<Packet> Receive(BlockingCollection<Packet> packets, byte kind, CancellationToken token)
     {
@@ -29,11 +30,11 @@ class HardwareTests
     static async Task Bridge(string port, CancellationToken token)
     {
         using(var usb = new UsbLink(port))
-        using(var ble = new BleLink())
+        using(var ble = SelectedBoard())
         using(var stop = CancellationTokenSource.CreateLinkedTokenSource(token))
         {
             usb.Received += p => usbPackets.Add(p); ble.Received += p => blePackets.Add(p);
-            await ble.Open(await BleLink.Scan(token),token);
+            await ble.Open(token);
             Task uh = Heartbeat(usb,stop.Token), bh = Heartbeat(ble,stop.Token);
             try
             {
@@ -73,10 +74,10 @@ class HardwareTests
     }
     static async Task GuiPeer(bool usbPeer,string port,CancellationToken token)
     {
-        using(ILink peer=usbPeer?(ILink)new UsbLink(port):new BleLink())
+        using(ILink peer=usbPeer?(ILink)new UsbLink(port):SelectedBoard())
         using(var stop=CancellationTokenSource.CreateLinkedTokenSource(token)) {
             peer.Received+=p=>blePackets.Add(p);
-            if(!usbPeer)await ((BleLink)peer).Open(await BleLink.Scan(token),token);
+            if(!usbPeer)await ((BleLink)peer).Open(token);
             Task heartbeat=Heartbeat(peer,stop.Token);byte[] key=new byte[32];
             using(var stream=typeof(Protocol).Assembly.GetManifestResourceStream("AtomClip.PairingKey"))stream.Read(key,0,32);
             try {
@@ -117,8 +118,8 @@ class HardwareTests
     }
     static async Task Guard(string port,CancellationToken token)
     {
-        using(var usb=new UsbLink(port))using(var ble=new BleLink())using(var stop=CancellationTokenSource.CreateLinkedTokenSource(token)) {
-            ble.Received+=p=>blePackets.Add(p);await ble.Open(await BleLink.Scan(token),token);
+        using(var usb=new UsbLink(port))using(var ble=SelectedBoard())using(var stop=CancellationTokenSource.CreateLinkedTokenSource(token)) {
+            ble.Received+=p=>blePackets.Add(p);await ble.Open(token);
             Task uh=Heartbeat(usb,stop.Token),bh=Heartbeat(ble,stop.Token);
             try {
                 Packet status;do{status=await Receive(blePackets,Protocol.Status,token);}while(status.Payload.Length<3||status.Payload[0]!=1);
@@ -134,10 +135,10 @@ class HardwareTests
     static async Task Typing(CancellationToken token, bool diverse, bool paste)
     {
         Packet unused;while(blePackets.TryTake(out unused)){}
-        using(var ble=new BleLink())
+        using(var ble=SelectedBoard())
         using(var stop=CancellationTokenSource.CreateLinkedTokenSource(token))
         {
-            ble.Received+=p=>blePackets.Add(p);await ble.Open(await BleLink.Scan(token),token);
+            ble.Received+=p=>blePackets.Add(p);await ble.Open(token);
             Task heartbeat=Heartbeat(ble,stop.Token);
             byte[] key=new byte[32];
             using(var stream=typeof(Protocol).Assembly.GetManifestResourceStream("AtomClip.PairingKey"))

@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Collections.Generic;
 using System.Windows.Forms;
@@ -25,7 +25,7 @@ namespace AtomClipUsb {
                 setupDirection = WrappedLabel(""); setupDirection.ForeColor = Theme.Muted; AddRow(first, setupDirection, false);
                 AddRow(first, WrappedLabel("内网：Win+R → 系统 ENG → 关闭大写锁定 → 清空运行框。"), false);
                 prepareReceiver.Text = "写入启动内容"; FitButton(prepareReceiver); AddRow(first, prepareReceiver, false);
-                AddRow(first, WrappedLabel("启动等待（秒）：默认 10；慢电脑可调至 20–30。需本版固件；旧固件仍固定约 3 秒。"), false);
+                AddRow(first, WrappedLabel("启动等待（秒）：默认 10；慢电脑可调至 20–30。配套固件支持可调启动等待。"), false);
                 AddRow(first, startupDelay, false);
                 AddRow(first, fastInput, false);
                 typingPaceNote = WrappedLabel(""); typingPaceNote.ForeColor = Theme.Muted; AddRow(first, typingPaceNote, false);

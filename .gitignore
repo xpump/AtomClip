@@ -24,3 +24,6 @@ PairingKey.h
 .vs/
 .idea/
 __pycache__/
+
+# Password-encrypted device exports remain user configuration, not source
+*.acbind

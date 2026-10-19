@@ -20,3 +20,9 @@ jobs:
       - name: Verify Windows and Android protocol compatibility
         shell: pwsh
         run: ./scripts/Test-Protocol.ps1
+      - name: Verify Android editing and ROM download protocol
+        shell: pwsh
+        run: ./scripts/Test-Android.ps1 -CoreOnly
+      - name: Verify device identity, secure sessions and binding recovery
+        shell: pwsh
+        run: ./scripts/Test-V2.ps1

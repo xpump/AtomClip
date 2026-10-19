@@ -26,8 +26,9 @@ inline Bytes frame(uint8_t kind,const uint8_t* payload,size_t n) {
 class Parser {
   Bytes buf;
   uint32_t last=0;
+  bool management;
 public:
-  Parser() { buf.reserve(MAX_PAYLOAD+13); }
+  explicit Parser(bool usbManagement=false):management(usbManagement) { buf.reserve(MAX_PAYLOAD+13); }
   void reset() { buf.clear(); }
   void expire(uint32_t now) { if(!buf.empty() && uint32_t(now-last)>3000) reset(); }
   void feed(const uint8_t* input,size_t n,uint32_t now,const std::function<void(Bytes&&)>& emit) {
@@ -40,7 +41,7 @@ public:
         if(!std::equal(MAGIC,MAGIC+4,buf.begin())) { buf.erase(buf.begin());continue; }
         if(buf.size()<9) break;
         uint32_t len=le32(buf.data()+5);
-        if(len>MAX_PAYLOAD || buf[4]<1 || buf[4]>6) {buf.erase(buf.begin());continue;}
+        if(len>MAX_PAYLOAD || buf[4]<1 || (buf[4]>6 && !(management && buf[4]==7))) {buf.erase(buf.begin());continue;}
         if(buf.size()<13+len) break;
         if(crc(buf.data()+4,5+len)!=le32(buf.data()+9+len)) {buf.erase(buf.begin());continue;}
         Bytes ready;ready.swap(buf);buf.reserve(MAX_PAYLOAD+13);emit(std::move(ready));break;

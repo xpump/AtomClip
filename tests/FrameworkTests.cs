@@ -45,7 +45,12 @@ class FrameworkTests
             try { Protocol.Encrypt(new string('a', 16385), key); throw new Exception("Oversize accepted"); } catch (ArgumentException) { }
             try { Protocol.Encrypt("bad\0text", key); throw new Exception("NUL accepted"); } catch (ArgumentException) { }
             File.WriteAllBytes(Path.Combine(folder,"windows-direct.data"),Protocol.CreateDirectKeyJob("ASCII 123!\r\nNext\tline",key));
-            File.WriteAllBytes(Path.Combine(folder,"windows-pinyin.data"),Protocol.CreatePinyinJob("中文Ab123，。\r\nNext\tline",false,key));
+            File.WriteAllBytes(Path.Combine(folder,"windows-pinyin.data"),Protocol.CreatePinyinJob("中文Ab123，。\r\nNext\tline",key));
+            foreach (var speed in new[]{new[]{7,120},new[]{1,20},new[]{50,200}})
+                File.WriteAllBytes(Path.Combine(folder,"windows-pinyin-"+speed[0]+"-"+speed[1]+".data"),Protocol.CreatePinyinJob("中文Ab123，。\r\nNext\tline",speed[0],speed[1],key));
+            foreach (var speed in new[]{new[]{0,80},new[]{51,80},new[]{4,19},new[]{4,201},new[]{-1,80},new[]{4,int.MaxValue}})
+                try { Protocol.CreatePinyinJob("中文",speed[0],speed[1],key);throw new Exception("Invalid VUC speed accepted"); } catch (ArgumentOutOfRangeException) { }
+            Require(Protocol.PinyinMilliseconds("中A文",4,80)==570&&Protocol.PinyinMilliseconds("A",4,80)==194&&Protocol.PinyinMilliseconds("中文",50,200)==1500,"VUC duration includes commit, key and Shift waits, including custom maximum");
             File.WriteAllBytes(Path.Combine(folder,"windows-gbk.data"),Protocol.CreateGbkJob("病ABC123，中文!\r\nNext\tline",false,key));
             File.WriteAllBytes(Path.Combine(folder,"windows-gbk-compatible.data"),Protocol.CreateGbkJob("病ABC123，中文!\r\nNext\tline",true,key));
             Require(BitConverter.ToString(Protocol.EncodeGbkText(Protocol.KeyboardProbeText))=="B2-A1-41-42-43-31-32-33-A3-AC-D6-D0-CE-C4-21","GBK canonical mixed probe bytes");
@@ -53,10 +58,9 @@ class FrameworkTests
             foreach(string invalid in new[]{"😀","𠀀","\u2603","\u20ac","\ue000","bad\rtext",new string('中',5462)})
                 try { Protocol.CreateGbkJob(invalid,false,key);throw new Exception("Unsupported GBK text accepted"); } catch(ArgumentException) {}
             File.WriteAllBytes(Path.Combine(folder,"windows-probe.data"),Protocol.CreatePinyinProbeJob(key));
-            File.WriteAllBytes(Path.Combine(folder,"windows-pinyin-compatible.data"),Protocol.CreatePinyinJob("中文Ab123，。\r\nNext\tline",true,key));
             Require(Protocol.NormalizePinyinText(new string('中',5461)+"a").Length==5462,"Pinyin exact 16KiB limit");
             foreach(string invalid in new[]{"","😀","𠀀","bad\0text","bad\rtext","bad\u0085", "\uffff", "\ud800",new string('中',5462)})
-                try { Protocol.CreatePinyinJob(invalid,false,key);throw new Exception("Unsupported pinyin text accepted"); } catch(ArgumentException) {}
+                try { Protocol.CreatePinyinJob(invalid,key);throw new Exception("Unsupported pinyin text accepted"); } catch(ArgumentException) {}
             File.WriteAllBytes(Path.Combine(folder,"windows-delay.data"),Protocol.CreateTypeJob("中文启动等待 😀",false,4,30,key));
             File.WriteAllBytes(Path.Combine(folder,"windows-fast.data"),Protocol.CreateTypeJob("中文启动等待 😀",false,1,10,key));
             foreach(byte interval in new byte[]{0,51,255})

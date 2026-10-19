@@ -1,7 +1,8 @@
 ﻿param(
     [string]$ToolsDirectory = (Join-Path $PSScriptRoot '..\.tools\android_tools'),
     [string]$BuildDirectory = (Join-Path $env:TEMP 'AtomClip-android'),
-    [string]$OutputFile = (Join-Path $PSScriptRoot '..\dist\Android\AtomClipBLE.apk')
+    [string]$OutputFile = (Join-Path $PSScriptRoot '..\dist\Android\AtomClipBLE.apk'),
+    [string]$FirmwareDirectory = (Join-Path $PSScriptRoot '..\dist\firmware\bundle')
 )
 $ErrorActionPreference = 'Stop'
 $RepoRoot = Split-Path -Parent $PSScriptRoot
@@ -15,7 +16,12 @@ New-Item -ItemType Directory -Path "$BuildDirectory\classes","$BuildDirectory\de
 $key = [Convert]::FromBase64String((Get-Content (Join-Path $PrivateDirectory 'pairing.json') -Raw -Encoding UTF8 | ConvertFrom-Json).Key)
 if ($key.Length -ne 32) { throw 'Invalid pairing file' }
 [IO.File]::WriteAllBytes((Join-Path $BuildDirectory 'assets\pairing.bin'),$key)
+& (Join-Path $PSScriptRoot 'Copy-FirmwareBundle.ps1') -Directory $FirmwareDirectory -Destination (Join-Path $BuildDirectory 'assets\firmware') -LegacyKey $key
 [Array]::Clear($key,0,$key.Length)
+Copy-Item -LiteralPath (Join-Path $RepoRoot 'boards\profiles.json') -Destination (Join-Path $BuildDirectory 'assets\boards.json') -Force
+$licenseFiles=@((Join-Path $RepoRoot 'LICENSE'))+@(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'licenses') -File | Where-Object Extension -ne '.zip' | ForEach-Object FullName)
+$licenseText=foreach($licenseFile in $licenseFiles){[IO.File]::ReadAllText($licenseFile)}
+[IO.File]::WriteAllText((Join-Path $BuildDirectory 'assets\licenses.txt'),($licenseText -join "`n`n"),[Text.UTF8Encoding]::new($false))
 & (Join-Path $PSScriptRoot 'BUILD_MEMORY_RECEIVER.ps1') -OutputFile (Join-Path $BuildDirectory 'assets\receiver.txt')
 & (Join-Path $PSScriptRoot 'BUILD_MEMORY_RECEIVER.ps1') -OutputFile (Join-Path $BuildDirectory 'assets\receiver-duplex.txt') -Bidirectional
 $javaFiles = Get-ChildItem (Join-Path $RepoRoot 'src\android') -Filter '*.java' | ForEach-Object FullName

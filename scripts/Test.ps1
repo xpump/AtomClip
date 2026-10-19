@@ -7,14 +7,16 @@ $ErrorActionPreference='Stop';$repo=Split-Path -Parent $PSScriptRoot
 New-Item -ItemType Directory -Path $TestDirectory -Force | Out-Null
 Copy-Item -LiteralPath $BleAssembly -Destination (Join-Path $TestDirectory 'AtomClipBLE.exe') -Force
 $compiler=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
-foreach($name in @('EditorReceiverTests','ConnectionModeTests','EditorRenderingTests','FlashTests','FrameworkTests','HardwareTests','ConsolePasteTests')){
+foreach($name in @('EditorReceiverTests','ConnectionModeTests','EditorRenderingTests','BoardManagementTests','BleConnectionStatusTests','FlashTests','FrameworkTests','HardwareTests','ConsolePasteTests')){
  $target=if($name -eq 'ConsolePasteTests'){'winexe'}else{'exe'}
- & $compiler /nologo /utf8output ('/target:'+$target) /platform:x64 ('/out:'+(Join-Path $TestDirectory ($name+'.exe'))) ('/reference:'+(Join-Path $TestDirectory 'AtomClipBLE.exe')) /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll (Join-Path $repo ('tests\'+$name+'.cs'))
+ & $compiler /nologo /utf8output ('/target:'+$target) /platform:x64 ('/out:'+(Join-Path $TestDirectory ($name+'.exe'))) ('/reference:'+(Join-Path $TestDirectory 'AtomClipBLE.exe')) /reference:System.dll /reference:System.Core.dll /reference:System.Drawing.dll /reference:System.Windows.Forms.dll /reference:System.IO.Compression.FileSystem.dll (Join-Path $repo ('tests\'+$name+'.cs'))
  if($LASTEXITCODE -ne 0){throw ($name+' compilation failed')}
 }
 & (Join-Path $TestDirectory 'EditorReceiverTests.exe');if($LASTEXITCODE -ne 0){throw 'Editor/UI regression failed'}
 & (Join-Path $TestDirectory 'ConnectionModeTests.exe');if($LASTEXITCODE -ne 0){throw 'Connection mode/pacing regression failed'}
 & (Join-Path $TestDirectory 'EditorRenderingTests.exe');if($LASTEXITCODE -ne 0){throw 'Editor rendering/state regression failed'}
+& (Join-Path $TestDirectory 'BoardManagementTests.exe');if($LASTEXITCODE -ne 0){throw 'Board management regression failed'}
+& (Join-Path $TestDirectory 'BleConnectionStatusTests.exe');if($LASTEXITCODE -ne 0){throw 'BLE connection status regression failed'}
 & (Join-Path $TestDirectory 'FlashTests.exe');if($LASTEXITCODE -ne 0){throw 'Flash resource/plan regression failed'}
 if($ClipboardTests){
  $usbAssembly=Join-Path (Split-Path -Parent (Split-Path -Parent ([IO.Path]::GetFullPath($BleAssembly)))) 'USB\AtomClipUSB.exe'

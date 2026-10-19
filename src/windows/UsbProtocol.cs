@@ -154,11 +154,31 @@ namespace AtomClipUsb
                     throw new ArgumentException("微软拼音键盘暂仅支持常用中文与 BMP 字符，不支持 emoji、扩展汉字或此控制字符；未发送");
             return text;
         }
-        public static byte[] CreatePinyinJob(string text, bool compatible, byte[] key)
+        public static byte[] CreatePinyinJob(string text, byte[] key)
+        { return CreatePinyinJob(text, 4, 80, key); }
+        public static void ValidatePinyinSpeed(int gap, int settle)
         {
+            if (gap < 1 || gap > 50 || settle < 20 || settle > 200)
+                throw new ArgumentOutOfRangeException("speed", "按键间隔须为 1–50ms，确认等待须为 20–200ms。");
+        }
+        public static int PinyinMilliseconds(string text, int gap, int settle)
+        {
+            ValidatePinyinSpeed(gap, settle); text = NormalizePinyinText(text);
+            int total = 0; bool english = false;
+            foreach (char c in text) {
+                bool ascii = c < 128;
+                if (ascii != english) { total += 15 + settle; english = ascii; }
+                total += ascii ? gap : 7 * gap + 2 * settle;
+            }
+            return total + (english ? 15 + settle : 0);
+        }
+        public static byte[] CreatePinyinJob(string text, int gap, int settle, byte[] key)
+        {
+            ValidatePinyinSpeed(gap, settle);
             byte[] raw = Utf8.GetBytes(NormalizePinyinText(text));
             byte[] plain = new byte[raw.Length + 3]; plain[0] = 5;
-            plain[1] = compatible ? (byte)80 : (byte)35; plain[2] = compatible ? (byte)4 : (byte)1;
+            // Allow Microsoft Pinyin to commit each VUC character and complete Shift toggles.
+            plain[1] = (byte)settle; plain[2] = (byte)gap;
             Buffer.BlockCopy(raw, 0, plain, 3, raw.Length); Array.Clear(raw, 0, raw.Length);
             return EncryptBytes(plain, key);
         }

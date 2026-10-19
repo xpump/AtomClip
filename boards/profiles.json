@@ -1,0 +1,99 @@
+{
+  "schema": 1,
+  "profiles": [
+    {
+      "id": 1,
+      "key": "atoms3u-8m",
+      "name": "M5Stack AtomS3U · 8MB",
+      "chip": "esp32s3",
+      "flashBytes": 8388608,
+      "flashMode": "dio",
+      "flashFrequencyMHz": 80,
+      "partitionScheme": "default_8MB",
+      "nativeUsb": true,
+      "usbPort": "板载 USB-A 原生 USB",
+      "capabilities": 255,
+      "buttonPin": 41,
+      "rgbLedPin": 35,
+      "backend": "esp32s3-rom",
+      "status": "build-and-simulation-only",
+      "partitionFile": "s3-8m.csv"
+    },
+    {
+      "id": 260,
+      "key": "generic-s3-4m",
+      "name": "Generic ESP32-S3 · SPI NOR 4MB",
+      "chip": "esp32s3",
+      "flashBytes": 4194304,
+      "flashMode": "dio",
+      "flashFrequencyMHz": 80,
+      "partitionScheme": "default",
+      "nativeUsb": true,
+      "usbPort": "ESP32-S3 原生 USB（D− GPIO19 / D+ GPIO20），非 USB-UART 口",
+      "capabilities": 159,
+      "buttonPin": -1,
+      "rgbLedPin": -1,
+      "backend": "esp32s3-rom",
+      "status": "build-and-simulation-only",
+      "partitionFile": "s3-4m.csv"
+    },
+    {
+      "id": 264,
+      "key": "generic-s3-8m",
+      "name": "Generic ESP32-S3 · SPI NOR 8MB",
+      "chip": "esp32s3",
+      "flashBytes": 8388608,
+      "flashMode": "dio",
+      "flashFrequencyMHz": 80,
+      "partitionScheme": "default_8MB",
+      "nativeUsb": true,
+      "usbPort": "ESP32-S3 原生 USB（D− GPIO19 / D+ GPIO20），非 USB-UART 口",
+      "capabilities": 159,
+      "buttonPin": -1,
+      "rgbLedPin": -1,
+      "backend": "esp32s3-rom",
+      "status": "build-and-simulation-only",
+      "partitionFile": "s3-8m.csv"
+    },
+    {
+      "id": 272,
+      "key": "generic-s3-16m",
+      "name": "Generic ESP32-S3 · SPI NOR 16MB",
+      "chip": "esp32s3",
+      "flashBytes": 16777216,
+      "flashMode": "dio",
+      "flashFrequencyMHz": 80,
+      "partitionScheme": "custom",
+      "nativeUsb": true,
+      "usbPort": "ESP32-S3 原生 USB（D− GPIO19 / D+ GPIO20），非 USB-UART 口",
+      "capabilities": 159,
+      "buttonPin": -1,
+      "rgbLedPin": -1,
+      "backend": "esp32s3-rom",
+      "status": "build-and-simulation-only",
+      "partitionFile": "s3-16m.csv"
+    }
+  ],
+  "roadmap": [
+    {
+      "family": "ESP32-C3 / ESP32-C6 / 经典 ESP32",
+      "state": "not-implemented",
+      "potential": "BLE 与串口剪贴板桥；须增加串口桥/固定 Serial-JTAG 后端；不支持原生 HID 键盘与自动 PowerShell 初始化"
+    },
+    {
+      "family": "nRF52840",
+      "state": "not-implemented",
+      "potential": "具备 BLE 与 USB 硬件，需专门移植 BLE / USB / 存储 / 烧录后端"
+    },
+    {
+      "family": "Pico W / Pico 2 W",
+      "state": "not-implemented",
+      "potential": "需各平台 BLE / USB / 存储 / 烧录后端，不能使用 ESP32 ROM 烧录器"
+    },
+    {
+      "family": "ESP32-S2 / 普通 Pico / 无 BLE 芯片",
+      "state": "additional-radio-required",
+      "potential": "缺少开箱 BLE 链路，需额外无线硬件；不列为完整支持"
+    }
+  ]
+}

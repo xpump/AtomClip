@@ -88,6 +88,8 @@ public class EditorReceiverTests
             Require(editor.Text == "切换模式保留草稿", "switching modes retains editor draft");
             editor.Clear();
             string bootstrap = (string)Call(form, "ReadReceiverBootstrap");
+            Require(bootstrap.Contains(Convert.ToBase64String(key)),"bootstrap contains active runtime key");
+            byte[] changed=(byte[])key.Clone();changed[0]^=128;Buffer.BlockCopy(changed,0,(byte[])Get(form,"key"),0,32);string substituted=(string)Call(form,"ReadReceiverBootstrap");Require(substituted.Contains(Convert.ToBase64String(changed))&&substituted.Length==bootstrap.Length,"runtime key substitution keeps exact bootstrap length");Buffer.BlockCopy(key,0,(byte[])Get(form,"key"),0,32);
             Require(!bootstrap.Contains("$PSScriptRoot") && !bootstrap.Contains("$RepoRoot"), "pasted receiver has no build-script directory dependency");
             Require(bootstrap.Contains("\r\n") && !bootstrap.Replace("\r\n", "").Contains("\n"), "bootstrap uses only Windows CRLF for classic-console paste");
             Require(bootstrap.EndsWith("\r\n\r\n"), "native console multiline bootstrap ends with a blank line");

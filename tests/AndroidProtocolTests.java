@@ -21,16 +21,18 @@ public class AndroidProtocolTests {
   try{Protocol.utf8(new String(new char[16385]).replace('\0','a'));throw new AssertionError("Oversize accepted");}catch(IllegalArgumentException expected){}
   byte[] open=Protocol.receiverOpenJob(key);Files.write(root.resolve("android-open.data"),open);
   Files.write(root.resolve("android-direct.data"),Protocol.directKeys("ASCII 123!\r\nNext\tline",key));
-  Files.write(root.resolve("android-pinyin.data"),Protocol.pinyinJob("中文Ab123，。\r\nNext\tline",false,key));
+  Files.write(root.resolve("android-pinyin.data"),Protocol.pinyinJob("中文Ab123，。\r\nNext\tline",key));
+  for(int[] speed:new int[][]{{7,120},{1,20},{50,200}})Files.write(root.resolve("android-pinyin-"+speed[0]+"-"+speed[1]+".data"),Protocol.pinyinJob("中文Ab123，。\r\nNext\tline",speed[0],speed[1],key));
+  for(int[] speed:new int[][]{{0,80},{51,80},{4,19},{4,201},{-1,80},{4,Integer.MAX_VALUE}})try{Protocol.pinyinJob("中文",speed[0],speed[1],key);throw new AssertionError("Invalid VUC speed accepted");}catch(IllegalArgumentException expected){}
+  require(Protocol.pinyinMilliseconds("中A文",4,80)==570&&Protocol.pinyinMilliseconds("A",4,80)==194&&Protocol.pinyinMilliseconds("中文",50,200)==1500,"VUC duration includes commit, key and Shift waits, including custom maximum");
   Files.write(root.resolve("android-gbk.data"),Protocol.gbkJob("病ABC123，中文!\r\nNext\tline",false,key));
   Files.write(root.resolve("android-gbk-compatible.data"),Protocol.gbkJob("病ABC123，中文!\r\nNext\tline",true,key));
   require(Arrays.equals(Protocol.encodeGbkText(Protocol.KEYBOARD_PROBE_TEXT),new byte[]{(byte)0xb2,(byte)0xa1,65,66,67,49,50,51,(byte)0xa3,(byte)0xac,(byte)0xd6,(byte)0xd0,(byte)0xce,(byte)0xc4,33}),"GBK canonical mixed probe bytes");
   require(Protocol.encodeGbkText(new String(new char[16384]).replace('\0','a')).length==16384,"GBK exact ASCII maximum without expansion");
   for(String invalid:new String[]{"😀","𠀀","\u2603","\u20ac","\ue000","bad\rtext",new String(new char[5462]).replace('\0','中')})try{Protocol.gbkJob(invalid,false,key);throw new AssertionError("Unsupported GBK text accepted");}catch(IllegalArgumentException expected){}
   Files.write(root.resolve("android-probe.data"),Protocol.pinyinProbe(key));
-  Files.write(root.resolve("android-pinyin-compatible.data"),Protocol.pinyinJob("中文Ab123，。\r\nNext\tline",true,key));
   require(Protocol.normalizePinyinText(new String(new char[5461]).replace('\0','中')+"a").length()==5462,"Pinyin exact 16KiB limit");
-  for(String invalid:new String[]{"","😀","𠀀","bad\0text","bad\rtext","bad\u0085","\uffff","\ud800",new String(new char[5462]).replace('\0','中')})try{Protocol.pinyinJob(invalid,false,key);throw new AssertionError("Unsupported pinyin text accepted");}catch(IllegalArgumentException expected){}
+  for(String invalid:new String[]{"","😀","𠀀","bad\0text","bad\rtext","bad\u0085","\uffff","\ud800",new String(new char[5462]).replace('\0','中')})try{Protocol.pinyinJob(invalid,key);throw new AssertionError("Unsupported pinyin text accepted");}catch(IllegalArgumentException expected){}
   Files.write(root.resolve("android-delay.data"),Protocol.job("中文启动等待 😀",false,30,key));
   Files.write(root.resolve("android-fast.data"),Protocol.job("中文启动等待 😀",false,10,1,key));
   for(int interval:new int[]{0,51,255})try{Protocol.job("test",false,10,interval,key);throw new AssertionError("Invalid interval accepted");}catch(IllegalArgumentException expected){}

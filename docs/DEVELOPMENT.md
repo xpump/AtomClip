@@ -29,40 +29,40 @@
 
 Arduino CLI 的 data、downloads、user 等目录由其配置文件管理；ESP32 / NimBLE 应安装在该配置对应的位置。若 ESP32 工具链因中文路径链接失败，可用 `subst` 将开发目录映射为 ASCII 盘符，再传入 StageDirectory / BuildDirectory 和 Arduino 配置。
 
-## 构建一套独立配对程序
+## 构建 0.2.0 整合客户端（配套 0.2.0 固件）
 
-本机升级只构建外网时，`BUILD_WINDOWS.ps1 -BleOnly` 可跳过内网 EXE；沿用同一套密钥的原 USB EXE，核对 SHA256。新配对材料必须重新构建匹配的内网程序，不能混用其他套的 USB EXE。
-
-中文按键规划回归（不接硬件）：使用 ESP32 工具链的 `xtensa-esp32s3-elf-g++ -std=c++17 -fsyntax-only tests/PinyinPlannerTests.cpp tests/GbkPlannerTests.cpp`。编译期断言直接使用生产头文件；实际输入法、Alt 数字码语义和速度必须另做内网试输。GBK 映射在 Windows / Android 严格编码完成，固件不嵌入中文表。
-
-在仓库根目录运行以下代码。**这些是开发者在外网电脑运行的构建命令，不需要在内网输入。**
+工具目录保持上表结构。运行 `Build-Kit.ps1` 生成四种板型分段目录，并构建嵌入完整固件目录的 Windows / Android 客户端。新板运行时经物理 USB 配置独立密钥，无须每板重新编译。旧正文配对和 Android 签名仍保存在私有目录，不能公开。
 
 ```powershell
 ./scripts/Build-Kit.ps1 -ToolsDirectory ./.tools -ArduinoConfig /path/to/arduino-cli.yaml
+# 迁移现有 AtomS3U：复用原私有目录及签名，仅 Atom 配置使用旧正文配对
+./scripts/Build-Kit.ps1 -PrivateDirectory /path/to/existing-private -ToolsDirectory ./.tools -ArduinoConfig /path/to/config.yaml -AtomPairingMode migration
 ```
 
-脚本会生成并复用 `.local/private/pairing.json`，用同一份 32 字节密钥编译 Windows、Android 和固件。首次 Android 构建创建本地签名文件；后续保留它才能覆盖安装同一应用。不要混用不同套的产物。
-
-默认产物：`dist/Windows/USB/AtomClipUSB.exe`、`dist/Windows/BLE/AtomClipBLE.exe`、`dist/Android/AtomClipBLE.apk`、`dist/firmware/AtomClip-S3U.bin`。Windows BLE EXE 内置对应固件、esptool、接收初始化文本和许可，不依赖这些文件在旁边存在。
-
-按组件构建：
+按组件构建时，`BUILD_FIRMWARE.ps1 -Profile` 接受 `atoms3u-8m`、`generic-s3-4m`、`generic-s3-8m`、`generic-s3-16m`，`-PairingMode` 为 `independent` 或 `migration`。显式指定独立 StageDirectory / BuildDirectory / OutputDirectory，避免并行构建覆盖配对头。
 
 ```powershell
 $env:ATOMCLIP_PRIVATE_DIR = '/path/to/private'
-./scripts/BUILD_FIRMWARE.ps1 -ArduinoCli /path/to/arduino-cli.exe -ConfigFile /path/to/config.yaml
-./scripts/BUILD_WINDOWS.ps1 -FirmwareFile ./dist/firmware/AtomClip-S3U.bin -EsptoolFile /path/to/esptool.exe -MetadataDirectory /path/to/winmd
-./scripts/BUILD_ANDROID.ps1 -ToolsDirectory /path/to/android_tools
+./scripts/BUILD_FIRMWARE.ps1 -ArduinoCli /path/to/arduino-cli.exe -ConfigFile /path/to/config.yaml -Profile atoms3u-8m -PairingMode migration -OutputDirectory ./dist/firmware/atoms3u-8m
+# 四种 profile 均构建后聚合
+./scripts/New-FirmwareBundle.ps1 -Directories ./dist/firmware/atoms3u-8m,./dist/firmware/generic-s3-4m,./dist/firmware/generic-s3-8m,./dist/firmware/generic-s3-16m -OutputDirectory ./dist/firmware/bundle
+./scripts/BUILD_WINDOWS.ps1 -FirmwareDirectory ./dist/firmware/bundle -EsptoolFile /path/to/esptool.exe -MetadataDirectory /path/to/winmd
+./scripts/BUILD_ANDROID.ps1 -ToolsDirectory /path/to/android_tools -FirmwareDirectory ./dist/firmware/bundle
 ```
 
-固件使用 ESP32-S3、8 MB Flash、无 PSRAM、USB-OTG CDC、`default_8MB` 分区。分区是 Flash 内存放程序和数据的区域划分；程序空间上限由分区表决定，不能按全部 8 MB 计算。GPIO 是芯片的可编程输入输出引脚，使用 3.3 V 逻辑；本项目不要求外接 GPIO 硬件。
+Android APK 与 Windows EXE 均嵌入 `bundle.json` 与四板型分段文件，不嵌入用于升级的完整合并镜像。构建检查迁移固件的配对哈希，防止私人 / 公开配套交换；每段另验证 SHA256、长度、偏移和芯片。保留合并镜像仅供开发排查，用户普通升级不能写整个 Flash。中央配置与分区见 `boards/`，能力和范围见 [BOARDS.md](BOARDS.md)。
 
-固件合并镜像从地址 `0x0` 写入。当前固件支持桥接、直接键盘输入、可调启动等待、VUC 与 GBK。与开发版 0.5.4 / 0.5.5 的配套固件相同；能力检查决定旧固件可以使用的方式。
+Windows 内网构建限制 64KiB；兼容旧内网 EXE 的条件见 [MIGRATION.md](MIGRATION.md)。PowerShell 双向模板正文配对替换保持 44 字符，脚本仍须不超过 16384 UTF-8 字节。
 
 ## 测试
 
 ```powershell
 # 不需要真实开发板，不读取用户配对密钥
 ./scripts/Test-Protocol.ps1
+./scripts/Test-V2.ps1
+
+# Android 编译 + 编辑及 ROM 下载协议模拟；只运行核心测试可用 -CoreOnly（无需 Android SDK）
+./scripts/Test-Android.ps1 -ToolsDirectory /path/to/android_tools
 
 # 需先构建 BLE EXE；不会发送 BLE、打开串口或烧录
 ./scripts/Test.ps1
@@ -72,6 +72,8 @@ $env:ATOMCLIP_PRIVATE_DIR = '/path/to/private'
 ```
 
 `Test-Protocol.ps1` 使用公开、确定性的测试密钥。它验证实际 C# Framework、原 .NET 8 协议和 Android Java 的互通，以及固件中的 PowerShell 文字解码流程；不访问硬件。GitHub Actions 的 Windows 作业运行该检查，尚未在远程仓库实际执行。
+
+`Test-Android.ps1` 运行真实 Java 编辑历史与 ROM 实现，覆盖 SLIP 分片、转义、压缩写入顺序、芯片/容量/加密拒绝、超时、拔线、中止及 MD5 失败。不会打开 USB；Android 系统权限、布局、输入法和 OTG 供电需手机验证。
 
 `FlashTests` 注入模拟命令结果验证识别与写入顺序、型号/容量/端口/错误/哈希检查，同时解包真实资源、核对 SHA256，运行内置 esptool 的 `--help`。它不会烧板。
 
@@ -87,7 +89,8 @@ $env:ATOMCLIP_PRIVATE_DIR = '/path/to/private'
 - `FirmwareInstaller.cs`：离线资源校验、USB 设备描述、烧录状态机和进度日志。
 - `MemoryReceiver.cs`：内网系统桥接循环，由 PowerShell Add-Type 编译；客户端统一使用双向初始化资源，B 切换内网回传；保留旧单向资源用于协议回归。
 - `UsbProtocol.cs` / Android `Protocol.java`：加密、认证回执、帧解析和键盘任务。
-- Android `MainActivity.java` / `BleTransport.java`：前台界面、权限、连接和 GATT 队列。
+- Android `MainActivity.java` / `EditorHistory.java`：紧凑界面、同页全屏、各模式草稿和事务撤销；`BleTransport.java` 负责 GATT 队列。
+- Android `UsbFlashSession.java` / `UsbCdcTransport.java` / `EspRom.java`：旋转保留的烧录会话、系统 USB 授权、原生 CDC 传输、ROM 协议与分段镜像与分区兼容校验。
 
 `BUILD_MEMORY_RECEIVER.ps1` 生成可读初始化文本，移除字符串外的可选标点空格、保留逐行代码，强制 Windows CRLF，并以空白行结束。正文仍受 16 KiB 限制；单向 16332、双向 16339 UTF-8 字节（双向仅 45 字节余量）。修改接收器后必须检查大小和真实控制台粘贴，不应移除换行来压缩体积。
 
@@ -102,8 +105,8 @@ USB 构建仅嵌入 32 字节配对资源，图标使用原生 16/32/48 像素�
 
 源码 ZIP 包含 dotfiles、文档、测试和许可证，不包含 `.local/`、`.tools/`、`dist/`、`bin/`、`obj/`。可将该 ZIP 解压到空目录后作为 GitHub 仓库初始内容。首次上传与标签发布见 [发布说明](PUBLISHING.md)，没有自动创建远程仓库或推送。
 
-配套二进制与签名文件另存本机；不要将其加入公开仓库。当前版本没有独立的运行时重新配对功能，单个预编译套件的所有副本共享其嵌入密钥。公开分发应以源码和独立构建说明为入口，避免公开自己的配对套件。
+配套二进制与签名文件另存本机；不要将其加入公开源码仓库。0.2.1 支持通过物理 USB 生成、改绑和恢复每板独立配置；嵌入的旧正文配对仅用于兼容及迁移。私人 / 公开套件保持各自原签名和旧正文配对，不能互换。用户绑定配置 `.acbind` 不进入任何发行包。
 
 ## 版本约定
 
-Windows 外网与内网 AssemblyVersion / FileVersion、标题、日志及关于页统一为 0.1.0；Android versionName 为 0.1.0、versionCode 为 56。重新整理显示版本时内部版本码仍必须递增，以支持覆盖安装原签名 APK。固件不含同名应用版本字段，当前镜像与最后开发版保持相同，使用相同配对材料时无需重烧。
+Windows 外网与内网 AssemblyVersion / FileVersion 为 0.2.1.0；Android versionName 为 0.2.1、versionCode 为 59；固件 Info 保持 0.2.0。两套 APK 分别沿用各自 0.1.1 的签名。内部版本码必须递增以支持覆盖安装，显示版本和真实验收状态分别记录，当前交付为本地审查包。安全绑定需要 0.2.0 固件；已正常绑定的 V2 板无需因 0.2.1 客户端更新重烧。

@@ -1,7 +1,7 @@
-﻿param(
+param(
  [string]$OutputDirectory = (Join-Path $PSScriptRoot '..\dist\Windows'),
  [string]$MetadataDirectory = '',
- [string]$FirmwareFile = (Join-Path $PSScriptRoot '..\dist\firmware\AtomClip-S3U.bin'),
+ [string]$FirmwareDirectory = (Join-Path $PSScriptRoot '..\dist\firmware\bundle'),
  [string]$EsptoolFile = '',
  [switch]$BleOnly
 )
@@ -11,7 +11,7 @@ $PrivateDirectory=if($env:ATOMCLIP_PRIVATE_DIR){$env:ATOMCLIP_PRIVATE_DIR}else{J
 $ToolsDirectory=if($env:ATOMCLIP_TOOLS_DIR){$env:ATOMCLIP_TOOLS_DIR}else{Join-Path $RepoRoot '.tools'}
 if(!$MetadataDirectory){$MetadataDirectory=Join-Path $ToolsDirectory 'windows_sdk_contracts\ref\netstandard2.0'}
 if(!$EsptoolFile){$EsptoolFile=Join-Path $ToolsDirectory 'esptool.exe'}
-foreach($required in @($FirmwareFile,$EsptoolFile,(Join-Path $MetadataDirectory 'Windows.winmd'))){if(!(Test-Path -LiteralPath $required)){throw "Missing build dependency: $required"}}
+foreach($required in @((Join-Path $FirmwareDirectory 'bundle.json'),$EsptoolFile,(Join-Path $MetadataDirectory 'Windows.winmd'))){if(!(Test-Path -LiteralPath $required)){throw "Missing build dependency: $required"}}
 $framework=Join-Path $env:WINDIR 'Microsoft.NET\Framework64\v4.0.30319'
 $pairing=Get-Content -LiteralPath (Join-Path $PrivateDirectory 'pairing.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 $keyBytes=[Convert]::FromBase64String($pairing.Key)
@@ -37,12 +37,16 @@ try{
  [IO.File]::WriteAllText($licenseText,($licenseContent -join "`r`n`r`n"),[Text.UTF8Encoding]::new($false))
  & (Join-Path $PSScriptRoot 'BUILD_MEMORY_RECEIVER.ps1') -OutputFile $bootstrap
  & (Join-Path $PSScriptRoot 'BUILD_MEMORY_RECEIVER.ps1') -OutputFile $duplexBootstrap -Bidirectional
- $flashResources=@(Pack-FlashResource $FirmwareFile 'AtomClip-S3U.bin')+@(Pack-FlashResource $EsptoolFile 'esptool.exe')
+ $bundleStage=Join-Path $temporary 'firmware'
+ & (Join-Path $PSScriptRoot 'Copy-FirmwareBundle.ps1') -Directory $FirmwareDirectory -Destination $bundleStage -LegacyKey $keyBytes
+ Add-Type -AssemblyName System.IO.Compression.FileSystem
+ $bundleZip=Join-Path $temporary 'firmware.zip';[IO.Compression.ZipFile]::CreateFromDirectory($bundleStage,$bundleZip)
+ $flashResources=@(Pack-FlashResource $bundleZip 'firmware.zip')+@(Pack-FlashResource $EsptoolFile 'esptool.exe')
  $modes=if($BleOnly){@('BLE')}else{@('USB','BLE')}
  foreach($mode in $modes){
   $dir=Join-Path $OutputDirectory $mode;New-Item -ItemType Directory -Path $dir -Force | Out-Null
   $out=Join-Path $dir ('AtomClip'+$mode+'.exe')
-  $files=@('Program.cs','Theme.cs','UsbProtocol.cs','UsbLink.cs','FileLog.cs') | ForEach-Object {Join-Path $RepoRoot ('src\windows\'+$_)}
+  $files=@('Program.cs','Theme.cs','UsbProtocol.cs','UsbLink.cs','UsbManagement.cs','FileLog.cs') | ForEach-Object {Join-Path $RepoRoot ('src\windows\'+$_)}
   $refs=@('/reference:System.dll','/reference:System.Core.dll','/reference:System.Drawing.dll','/reference:System.Windows.Forms.dll')
   $brandIcon=Join-Path $RepoRoot 'assets\branding\AtomClip.ico'
   $brandMark=Join-Path $RepoRoot 'assets\branding\AtomClip-256.png'
@@ -70,9 +74,9 @@ try{
    $resources=@("/resource:$temporaryKey,AtomClip.PairingKey","/win32icon:$compactIcon")
   }
   if($mode -eq 'BLE'){
-   $files+=@('BleLink.cs','ReceiverSetup.cs','ConnectionModes.cs','KeyboardInput.cs','FirmwareInstaller.cs') | ForEach-Object {Join-Path $RepoRoot ('src\windows\'+$_)}
-   $resources+=@("/resource:$bootstrap,AtomClip.ReceiverBootstrap","/resource:$duplexBootstrap,AtomClip.DuplexBootstrap","/resource:$licenseText,AtomClip.Licenses")+$flashResources
-   $refs+=@("/reference:$framework\System.Runtime.WindowsRuntime.dll","/reference:$framework\System.Runtime.dll","/reference:$framework\System.Runtime.InteropServices.WindowsRuntime.dll")
+   $files+=@('BleLink.cs','BoardPresence.cs','BoardDiscovery.cs','V2Protocol.cs','DeviceBindings.cs','BoardCatalog.cs','UsbBoardClient.cs','BoardsUi.cs','ReceiverSetup.cs','ConnectionModes.cs','KeyboardInput.cs','FirmwareInstaller.cs','FirmwareBundle.cs') | ForEach-Object {Join-Path $RepoRoot ('src\windows\'+$_)}
+   $resources+=@("/resource:$(Join-Path $RepoRoot 'boards\profiles.json'),AtomClip.BoardCatalog","/resource:$bootstrap,AtomClip.ReceiverBootstrap","/resource:$duplexBootstrap,AtomClip.DuplexBootstrap","/resource:$licenseText,AtomClip.Licenses")+$flashResources
+   $refs+=@('/reference:System.IO.Compression.dll','/reference:System.IO.Compression.FileSystem.dll','/reference:System.Security.dll','/reference:System.Web.Extensions.dll',"/reference:$framework\System.Runtime.WindowsRuntime.dll","/reference:$framework\System.Runtime.dll","/reference:$framework\System.Runtime.InteropServices.WindowsRuntime.dll")
    $refs+=Get-ChildItem -LiteralPath $MetadataDirectory -Filter '*.winmd' | ForEach-Object {'/reference:'+ $_.FullName}
   }
   & "$framework\csc.exe" /nologo /utf8output /target:winexe /platform:x64 /optimize+ /checked- ('/define:'+$mode) "/out:$out" $resources $refs $files

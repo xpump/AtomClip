@@ -79,8 +79,21 @@ public final class Protocol {
   for(int i=0;i<text.length();i++){char c=text.charAt(i);if(Character.isSurrogate(c)||c>=0xfffe||(Character.isISOControl(c)&&c!='\n'&&c!='\t'))throw new IllegalArgumentException("BMP text only");}
   utf8(text);return text;
  }
- public static byte[] pinyinJob(String text,boolean compatible,byte[] key)throws Exception{
-  byte[] raw=utf8(normalizePinyinText(text)),plain=new byte[raw.length+3];plain[0]=5;plain[1]=(byte)(compatible?80:35);plain[2]=(byte)(compatible?4:1);System.arraycopy(raw,0,plain,3,raw.length);Arrays.fill(raw,(byte)0);return encryptBytes(plain,key);
+ public static byte[] pinyinJob(String text,byte[] key)throws Exception{
+  return pinyinJob(text,4,80,key);
+ }
+ public static void validatePinyinSpeed(int gap,int settle){
+  if(gap<1||gap>50||settle<20||settle>200)throw new IllegalArgumentException("按键间隔须为 1–50ms，确认等待须为 20–200ms。");
+ }
+ public static int pinyinMilliseconds(String text,int gap,int settle)throws Exception{
+  validatePinyinSpeed(gap,settle);text=normalizePinyinText(text);int total=0;boolean english=false;
+  for(int i=0;i<text.length();i++){boolean ascii=text.charAt(i)<128;if(ascii!=english){total+=15+settle;english=ascii;}total+=ascii?gap:7*gap+2*settle;}
+  return total+(english?15+settle:0);
+ }
+ public static byte[] pinyinJob(String text,int gap,int settle,byte[] key)throws Exception{
+  validatePinyinSpeed(gap,settle);
+  // Allow Microsoft Pinyin to commit each VUC character and complete Shift toggles.
+  byte[] raw=utf8(normalizePinyinText(text)),plain=new byte[raw.length+3];plain[0]=5;plain[1]=(byte)settle;plain[2]=(byte)gap;System.arraycopy(raw,0,plain,3,raw.length);Arrays.fill(raw,(byte)0);return encryptBytes(plain,key);
  }
  public static final String KEYBOARD_PROBE_TEXT="病ABC123，中文!";
  public static byte[] encodeGbkText(String text)throws Exception{
