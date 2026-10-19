@@ -1,21 +1,31 @@
 # AtomClip 0.2.0
 
-Windows / Android 0.2.0，Android versionCode 61。支持 Windows x64、Android 8.0+ 和具备原生 USB 的 ESP32-S3 开发板。
+本次更新以 GitHub 已发布的 **v0.1.0** 为比较基准，包含此后累积的功能和修复。Windows / Android 均为 **0.2.0**，Android versionCode 从 56 升至 **61**，沿用原公开签名。
 
-## 主要更新
+支持 Windows x64、Android 8.0+ 和具备原生 USB 的 ESP32-S3 开发板。
 
-- 新增“我的开发板”：物理 USB 绑定、完整设备编号选择、加密配置导入导出及绑定中断恢复。按完整编号合并本机绑定与附近扫描结果，避免同一开发板重复显示。
-- 简化 USB 添加流程；已有绑定优先核对，自动保留正文配对。移除旧固件兼容连接。
-- 采用独立控制密钥、双向认证与 AES-GCM 会话。修复部分 Windows 蓝牙环境查询服务失败的问题，连接阶段和具体错误持续显示。
-- VUC 默认兼容速度为按键 **4ms**、确认 / 中英切换等待 **80ms**。新增“自定义速度”，支持保存、取消和恢复默认，试输与正文共用参数。
-- Android 修复双行选中框裁切和编辑按钮拥挤，保留全屏、分模式草稿及撤销，发送后保留文字和选区。
-- 支持 AtomS3U 8MB、Generic ESP32-S3 SPI NOR 4 / 8 / 16MB；清单驱动的分段烧录，检查板型、容量与摘要。兼容分区升级保留 NVS，首次安装或不兼容布局须明确清空安装。
+## 相比已发布的 v0.1.0
 
-PowerShell 默认双向，内网窗口按 B 切换回传。USB 键盘保留 GBK、VUC、纯英文，仅单向输入，不能读取内网剪贴板。内网程序为 **60KiB**。
+| 项目 | v0.1.0 | v0.2.0 |
+| --- | --- | --- |
+| 开发板识别与绑定 | 使用套件内固定配对，无独立开发板管理 | 新增“我的开发板”，经物理 USB 单独绑定，按完整 128 位编号选择目标；已绑定记录与附近扫描合并显示，简化添加流程 |
+| 绑定配置迁移 | 无绑定配置导入、导出界面 | 新增加密 `.acbind` 导入导出、待确认绑定恢复；本地配置由 Windows DPAPI / Android Keystore 保护 |
+| Android USB 烧录 | 不支持手机 USB 烧录 | 新增原生 USB OTG 烧录与 USB 绑定，APK 内置配套固件；真实手机 OTG 流程仍待验证 |
+| 板型与固件升级 | 仅 AtomS3U / ESP32-S3 8MB | 扩展为 AtomS3U 8MB 和 Generic ESP32-S3 SPI NOR 4 / 8 / 16MB；两端使用分段烧录，检查芯片、容量、OPI、分区及摘要，写入后校验；兼容分区升级保留 NVS 绑定区 |
+| Android 编辑 | 固定高度编辑区，已有基本的分模式草稿 | 新增同一 Activity 内全屏编辑、撤销和可撤销的一键清空；完善草稿、选区与撤销历史保持，发送后保留文字和编辑界面；调整双行选项自然高度、按钮间距及字体缩放布局 |
+| VUC 输入速度 | 默认按键 1ms / 确认等待 35ms，可手动选择兼容速度 | 默认使用兼容速度 **4ms / 80ms**；新增自定义速度、保存及恢复默认，试输与正文共用参数，预计时间及超时随参数调整 |
+| Windows BLE 连接 | 部分蓝牙环境按 UUID 查询服务失败后无法连接 | 改为完整服务枚举后选择目标，修复已复现的 `0x80070016`；连接阶段和具体错误持续显示 |
+| 内网程序 | 56KiB，使用固定正文配对 | **60KiB**，仍不超过 64KiB，可从物理 USB 初始化正文配对 |
+
+新版增加独立控制密钥、双向 HMAC 认证、HKDF 和方向独立的 AES-GCM 会话及严格序号。正文配对可按迁移流程保留；旧 BLE 固件兼容连接已移除。
+
+双向纯文本剪贴板、PowerShell 默认双向及内网按 B 切换、GBK / VUC / 纯英文和可选试输均为 0.1.0 已有功能。USB 键盘模式仍只支持单向输入，不能读取内网剪贴板。
+
+[查看 v0.1.0 → v0.2.0 源码差异](https://github.com/xpump/AtomClip/compare/v0.1.0...v0.2.0)
 
 ## 下载
 
-建议使用 **AtomClip-v0.2.0-clients-public.zip**，包含两套 Windows 程序、Android APK、固件、说明及第三方许可。
+推荐下载 [**AtomClip-v0.2.0-clients-public.zip**](https://github.com/xpump/AtomClip/releases/download/v0.2.0/AtomClip-v0.2.0-clients-public.zip)，包含 Windows 外网 / 内网程序、Android APK、固件、说明及第三方许可。[打开 0.2.0 Release](https://github.com/xpump/AtomClip/releases/tag/v0.2.0)。
 
 - `AtomClipBLE.exe`：Windows 外网主程序，内置烧录工具。
 - `AtomClipUSB.exe`：Windows 内网精简程序。
